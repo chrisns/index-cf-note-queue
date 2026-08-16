@@ -10,11 +10,15 @@ The GitHub issues on this repository record **why** each decision was made. They
 
 ## 1. The one rule
 
-**The ring app has no retry.** It sends one POST. On any failure it logs and discards the note. The note is gone, and nothing tells the wearer.
+**The ring app has no retry.** It sends one POST. On any failure it logs and discards the upload. Nothing tells the wearer.
 
 Every decision below follows from that. When a rule looks over-cautious, this is why.
 
 Source: `IndexWebhookApiImpl.uploadIfEnabled` in `coredevices/mobileapp`. It calls `scope.launch`, sends one POST, and on failure calls `logger.e`. The caller returns before the upload finishes, so the app's own processing queue never learns the outcome and cannot re-run it.
+
+**What a failed POST actually loses.** The webhook is a decorator. `IndexWebhookUploadRecordingOperation.run` runs the inner operation first, so the app finishes its own transcription and note creation before the upload fires. A failed POST therefore loses **the vault copy**, not the thought. The note is still in the Pebble app and can be re-exported by hand.
+
+**The exception.** For a double-click-hold recording, the inner operation is chosen by the app's `secondaryMode` preference. When it is `Search`, the app creates **no** note of its own. The webhook is then the only copy, and a failed POST is a deleted thought. Check this setting on the phone. Treat the loss as total anyway: the design does not get to assume the safe mode is selected.
 
 ## 2. Accepted losses
 
@@ -63,6 +67,8 @@ Headers:
 
 Set the payload mode to **Both**.
 
+The app's webhook trigger preference has three values: `SingleClick`, `DoubleClickHold` and `Both`. Set it to **`Both`**. The webhook decorates the gesture's normal behaviour rather than replacing it, so nothing is given up. Anything less than `Both` means some notes never reach the vault, silently.
+
 **`recordingId` arrives only as the `audio` part's filename.** A transcription-only payload carries no id at all.
 
 Unrecognised parts, fields and headers are ignored. They are never a reason to reject.
@@ -86,7 +92,9 @@ Match `/` exactly. Go's `ServeMux` treats a trailing `/` pattern as a prefix, so
 
 `Authorization: Bearer <token>`.
 
-Compare `sha256.Sum256` of the presented token against `sha256.Sum256` of the expected one, with `subtle.ConstantTimeCompare`. Compare the digests, not the raw strings. `ConstantTimeCompare` returns 0 immediately on a length mismatch, so comparing raw strings leaks the length. Digests are always 32 bytes.
+`INDEX_BEARER_TOKENS` holds a **comma-separated list** of valid tokens. A presented token is valid when it matches any entry. This exists for rotation: add the new token, update the app, then remove the old one. Without it, rotation opens a window where the app and the service disagree, and every note in that window is a 401 and a lost vault copy.
+
+Compare `sha256.Sum256` of the presented token against `sha256.Sum256` of each valid one, with `subtle.ConstantTimeCompare`. Compare the digests, not the raw strings. `ConstantTimeCompare` returns 0 immediately on a length mismatch, so comparing raw strings leaks the length. Digests are always 32 bytes.
 
 A bad or missing bearer returns **401**. Nothing is written, and nothing is buffered anywhere.
 
@@ -131,7 +139,7 @@ Write whatever arrives. Never reject.
 
 Log once and exit non-zero when any of these fails. Fail at deploy, not at 3am.
 
-1. `INDEX_BEARER_TOKEN` is set and is at least 32 bytes. An unset value makes the expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
+1. `INDEX_BEARER_TOKENS` is set, is non-empty after splitting on commas, and every entry is at least 32 bytes. An empty entry makes an expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
 2. `VAULT_DIR` exists, and a probe file can be created and removed inside it.
 3. The service sets `VAULT_DIR` to mode `0755` and takes ownership of it, so the design stops depending on the provisioner leaving it world-writable.
 4. `time.LoadLocation("Europe/London")` succeeds. The binary must `import _ "time/tzdata"`, because a `scratch` image has no zoneinfo and the fallback is a silent switch to UTC.
@@ -368,7 +376,7 @@ Environment:
 
 | Variable | Value |
 |---|---|
-| `INDEX_BEARER_TOKEN` | from the Secret |
+| `INDEX_BEARER_TOKENS` | from the Secret, comma-separated |
 | `VAULT_DIR` | `/vault` |
 | `TZ` | `Europe/London` |
 | `LISTEN_ADDR` | `:8080` |
@@ -402,7 +410,7 @@ One `secretGenerator` over a gitignored `.env`, plus the credentials file.
 
 | Item | Source |
 |---|---|
-| `INDEX_BEARER_TOKEN` | `.env`, 32 bytes from a CSPRNG |
+| `INDEX_BEARER_TOKENS` | `.env`, each entry 32 bytes from a CSPRNG, comma-separated |
 | `<tunnel-uuid>.json` | the credentials file `cloudflared tunnel create` writes, added as a file entry |
 
 Add both filenames to `chrisns/infra/.gitignore` in the same commit that adds the app. The repository's own `.gitignore` must carry them, not only the operator's global one.
@@ -478,7 +486,7 @@ There is no way to replay a real note, and the first one is irreplaceable. So:
 5. Create `chrisns/infra/index-note/`, add both filenames to `.gitignore`, write `.env` and the credentials file, then `kubectl apply -k index-note/`.
 6. Confirm both Deployments are ready and the startup probe passed.
 7. `curl` a fixture at `https://index-note.cns.me/note` with the bearer. Confirm 200 and the files in the volume.
-8. Configure the ring: the URL, the `Authorization` header, payload mode **Both**, and the gesture bound to Webhook. If the app refuses an `Authorization` header, fall back to `X-Widget-Token` and change the service to match.
+8. Configure the ring: the URL, the `Authorization` header, payload mode **Both**, and the webhook trigger set to **Both**. If the app refuses an `Authorization` header, fall back to `X-Widget-Token` and change the service to match. While you are in Index Settings, read the `secondaryMode` value. If it is `Search`, a double-click-hold note has no copy in the app, and a failed POST loses it outright. See section 1.
 9. Record one real note. Confirm 200 in the app and the file in the volume.
 10. Read Cloudflare Security Events the **same day**. Free plan retention is short. Look for any row on this hostname from Browser Integrity Check, Bot Fight Mode or Managed Rules.
 11. Only now add the block rule from section 10.3.
