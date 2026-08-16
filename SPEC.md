@@ -86,7 +86,7 @@ Unrecognised parts, fields and headers are ignored. They are never a reason to r
 
 There is no redirect anywhere. A redirect could leak the bearer to a third party if the ring's client follows redirects, and it would force an exception in the Cloudflare block rule.
 
-Match `/` exactly. Go's `ServeMux` treats a trailing `/` pattern as a prefix, so register `GET /healthz` and `POST /note` explicitly and let everything else fall through to 404. Use the Go 1.22 method-aware patterns.
+Go's `ServeMux` 301-redirects non-canonical paths such as `//note` on its own. A guard in front of the mux 404s any path that is not exactly `/note` or `/healthz`, so the mux never gets the chance. Use the Go 1.22 method-aware patterns behind the guard.
 
 ### 6.2 Authentication
 
@@ -101,7 +101,7 @@ A bad or missing bearer returns **401**. Nothing is written, and nothing is buff
 ### 6.3 Reading the body
 
 - Wrap the body in `http.MaxBytesReader` at **16 MiB**.
-- Use `r.MultipartReader()` and stream each part to a temp file.
+- Parse the boundary with `mime.ParseMediaType` and stream parts through `multipart.NewReader` over a tail-tracking reader. The tail (the last `len(boundary)+512` bytes) is what tells a real `--boundary--` close delimiter apart from a body that died early: `mime/multipart` reports both as `io.EOF`. The audio part streams to a temp file; the small parts read into memory.
 - **Never** call `ParseMultipartForm`. It spills parts over `maxMemory` into `/tmp`, and the root filesystem is read-only.
 - **Never** use `part.FileName()` as a path component. Use it only as the source of `recordingId`, and only after sanitising it. See section 7.2.
 
@@ -110,6 +110,8 @@ A bad or missing bearer returns **401**. Nothing is written, and nothing is buff
 Hitting the cap, or a body that stops early, is **not** a reason to reject. Write whatever parts completed, set `truncated: true` in the frontmatter, and return **200**.
 
 Return **413** only when the body exceeds the cap before any part has completed, so there is nothing to write.
+
+An authenticated request whose `Content-Type` is missing, unparseable, or carries no boundary is treated the same way: nothing is recoverable, so write the empty-request note with `truncated: true` and return **200**. The ring would never resend after a 4xx.
 
 ### 6.5 Partial payloads
 
@@ -141,7 +143,7 @@ Log once and exit non-zero when any of these fails. Fail at deploy, not at 3am.
 
 1. `INDEX_BEARER_TOKENS` is set, is non-empty after splitting on commas, and every entry is at least 32 bytes. An empty entry makes an expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
 2. `VAULT_DIR` exists, and a probe file can be created and removed inside it.
-3. The service sets `VAULT_DIR` to mode `0755` and takes ownership of it, so the design stops depending on the provisioner leaving it world-writable.
+3. The service sets `VAULT_DIR` to mode `0755`. It cannot `chown` with every capability dropped; the probe write is what proves the directory is usable, and the provisioner creating it world-writable is the accepted mechanism.
 4. `time.LoadLocation("Europe/London")` succeeds. The binary must `import _ "time/tzdata"`, because a `scratch` image has no zoneinfo and the fallback is a silent switch to UTC.
 
 The startup probe replaces a one-off manual write check. A `scratch` image has no shell, so nobody can `exec` into the pod to run one.
@@ -178,7 +180,9 @@ It arrives only as the `audio` part's filename. It must be used, and never raw. 
 2. Truncate to 63 bytes.
 3. Require at least one `[A-Za-z0-9]` and no leading hyphen.
 
-If the result is unusable, or there is no audio part, **do not reject the note**. Synthesise an id from the timestamp and a short random suffix, and set `recordingIdSynthesised: true` in the frontmatter.
+If the result is unusable, **do not reject the note**. Synthesise an id from the timestamp and a short random suffix, and set `recordingIdSynthesised: true` in the frontmatter. The synthesised id exists to name the audio file.
+
+When there is no audio part at all, there is no id: omit `recordingId` and the flag (section 7.6), and the collision rules treat the note as id-less (section 7.4).
 
 A sanitised id also gives idempotency. The ring's duplicate guard is an in-memory set, so a duplicate after an app restart is real. The same id lands on the same filename.
 
@@ -204,13 +208,16 @@ On `EEXIST`:
 
 **A missing id is never equal to a missing id.** Two audio-less notes in the same minute must not collapse into one.
 
-Apply the same discipline to `attachments/<recordingId>.m4a`. Use `O_EXCL`, and on `EEXIST` keep the existing file only when the id matches this request. Never overwrite an attachment this request did not create.
+Apply the same discipline to `attachments/<recordingId>.m4a`. Use `O_EXCL`, and never overwrite an attachment this request did not create. On `EEXIST` the two cases differ:
+
+- A **ring-supplied** id: the filename is the id, so this is the same recording arriving twice. Keep the existing file.
+- A **synthesised** id: a different recording drew the same name. Regenerate the id and retry, and the note's embed references the file actually written.
 
 ### 7.5 The clock
 
 Use `recordedAt` from the body, in `Europe/London`, for both the filename and the frontmatter.
 
-When it is missing, zero, or more than a day from now, use the server clock and set `clockSource: server` in the frontmatter. A wrong timestamp must be visible, not invented.
+When it is missing, zero, or more than a day from now in either direction (exactly a day is allowed), use the server clock and set `clockSource: server` in the frontmatter. A wrong timestamp must be visible, not invented.
 
 ### 7.6 Frontmatter
 
@@ -248,7 +255,7 @@ tags:
 Remember to order more filament.
 ```
 
-The embed first, then the transcription. The audio is the source of truth. The transcription is a machine's reading of it.
+The embed first, then the transcription, with the transcription's leading and trailing whitespace trimmed. The audio is the source of truth. The transcription is a machine's reading of it.
 
 Obsidian resolves `![[name.m4a]]` by name anywhere in the vault, so the embed does not depend on the directory layout.
 
@@ -302,6 +309,7 @@ There is no `worker/` directory, no `wrangler.jsonc` and no Cloudflare API token
 
 - `import _ "time/tzdata"`. There is no zoneinfo in the image.
 - **No `ca-certificates`.** The service makes no outbound TLS calls.
+- `USER 65532:65532` and `EXPOSE 8080` as metadata. Defence in depth; the manifest sets the same numerically.
 
 ### 8.3 Build
 
@@ -367,6 +375,7 @@ The provisioner creates `/volume4/cluster-store/index-note-<claim>-<uuid>` on `t
 | capabilities | drop `ALL` |
 | `seccompProfile` | `RuntimeDefault` |
 | readiness and liveness | `httpGet /healthz` on port `http` |
+| resources | requests 50m / 64Mi, limits 200m / 128Mi |
 
 `runAsNonRoot` needs a numeric `runAsUser`, because `scratch` has no `/etc/passwd`. Without the number the kubelet refuses the pod.
 
@@ -385,14 +394,16 @@ Service `index-note`, port 80, `targetPort: http`.
 
 ### 9.3 `cloudflared`
 
-Two replicas, `RollingUpdate` with `maxUnavailable: 0`, `terminationGracePeriodSeconds: 40`. Readiness is `httpGet /ready` against the metrics port; run it with `--metrics 0.0.0.0:2000`.
+Two replicas, `RollingUpdate` with `maxUnavailable: 0`, `terminationGracePeriodSeconds: 40`. Readiness is `httpGet /ready` against the metrics port; the committed config file's `metrics: 0.0.0.0:2000` key provides it. `cloudflared` carries the same `securityContext` hardening as the service; it runs fine as 65532 with a read-only root.
+
+Both generators use `disableNameSuffixHash: true`, the house style. A config or secret edit therefore does not trigger a rollout by itself; deployment is manual `kubectl apply -k` plus a `kubectl rollout restart` when only the config changed.
 
 The tunnel is **locally managed**, so its routing lives in git. A remotely managed tunnel keeps the routing in the Cloudflare dashboard, and a rebuild from `kubectl apply -k` would silently lose it.
 
 ```yaml
 # cloudflared-config.yaml, committed, loaded with configMapGenerator
 tunnel: <tunnel-uuid>
-credentials-file: /etc/cloudflared/creds/<tunnel-uuid>.json
+credentials-file: /etc/cloudflared/creds/credentials.json
 metrics: 0.0.0.0:2000
 no-autoupdate: true
 ingress:
@@ -411,7 +422,7 @@ One `secretGenerator` over a gitignored `.env`, plus the credentials file.
 | Item | Source |
 |---|---|
 | `INDEX_BEARER_TOKENS` | `.env`, each entry 32 bytes from a CSPRNG, comma-separated |
-| `<tunnel-uuid>.json` | the credentials file `cloudflared tunnel create` writes, added as a file entry |
+| `credentials.json` | the credentials file `cloudflared tunnel create` writes, renamed and added as a file entry. A fixed name keeps the config independent of the tunnel uuid. |
 
 Add both filenames to `chrisns/infra/.gitignore` in the same commit that adds the app. The repository's own `.gitignore` must carry them, not only the operator's global one.
 

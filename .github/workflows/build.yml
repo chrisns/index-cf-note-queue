@@ -1,0 +1,8 @@
+name: Docker build
+on: [push]
+
+jobs:
+  build:
+    uses: chrisns/.github/.github/workflows/dockerbuild.yml@cebabbbee67cc9cc55c233518fcf9a7fa5f2d67d # main
+    with:
+      platforms: linux/amd64,linux/arm64
