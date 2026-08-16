@@ -270,13 +270,21 @@ Once the markdown is in place, return 200 whatever happens afterwards. A 500 mus
 ├── Dockerfile              # at the root: the shared build workflow hardcodes `context: .`
 ├── go.mod
 ├── main.go                 # and siblings
-├── testdata/               # captured multipart fixtures and golden files
+├── testdata/               # multipart fixtures and golden files
 ├── SPEC.md
 └── .github/
-    ├── workflows/build.yml
-    ├── semver.yaml
-    └── renovate.json5
+    ├── workflows/
+    │   ├── build.yml       # to add: calls the house build workflow
+    │   └── security.yml    # templated
+    ├── semver.yaml         # templated, seeded at major 1
+    ├── renovate.json5      # templated, extends github>chrisns/.github:renovate
+    ├── mergify.yml         # templated
+    └── FUNDING.yml         # templated
 ```
+
+`repomanager` already templated `semver.yaml`, `renovate.json5`, `mergify.yml`, `security.yml`, `LICENSE`, `SECURITY.md` and `CODE_OF_CONDUCT.md`. Only `build.yml`, the Go source and the `Dockerfile` are left to write.
+
+`mergify.yml` auto-merges pull requests from the templating bot and nothing else. The earlier decision against Mergify was about human pull requests, so leave it alone. Removing it would be undone on the next templating run.
 
 There is no `worker/` directory, no `wrangler.jsonc` and no Cloudflare API token. If one was created for a Worker deploy, revoke it and delete the Actions secret.
 
@@ -299,9 +307,7 @@ jobs:
       platforms: linux/amd64,linux/arm64
 ```
 
-It pushes to `ghcr.io/chrisns/index-cf-note-queue` on the default branch only, tags with the `semver-generator` output plus `sha-<long>`, `edge` and `latest`, and signs with cosign in a separate job. It needs `.github/semver.yaml`; copy the shape from `chrisns/docker-bb` and seed the version.
-
-Renovate extends `github>chrisns/.github:renovate`. There is no Mergify.
+It pushes to `ghcr.io/chrisns/index-cf-note-queue` on the default branch only, tags with the `semver-generator` output plus `sha-<long>`, `edge` and `latest`, and signs with cosign in a separate job. It reads `.github/semver.yaml`, which is already templated and seeded at major 1.
 
 Deployments pin the semver tag. Renovate raises the bump. A rollback is then a one-line revert.
 
@@ -468,7 +474,7 @@ There is no way to replay a real note, and the first one is irreplaceable. So:
 1. `cloudflared tunnel create index-note`. Keep the credentials JSON.
 2. `cloudflared tunnel route dns index-note index-note.cns.me`.
 3. Apply the Cloudflare settings in section 10.2, including the Skip rule.
-4. Seed `.github/semver.yaml`, push, and let the build produce a tagged image.
+4. Add `.github/workflows/build.yml`, push, and let the build produce a tagged image.
 5. Create `chrisns/infra/index-note/`, add both filenames to `.gitignore`, write `.env` and the credentials file, then `kubectl apply -k index-note/`.
 6. Confirm both Deployments are ready and the startup probe passed.
 7. `curl` a fixture at `https://index-note.cns.me/note` with the bearer. Confirm 200 and the files in the volume.
