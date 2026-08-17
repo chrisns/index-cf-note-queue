@@ -157,6 +157,10 @@ func TestRenderGolden(t *testing.T) {
 			if name != tc.wantFile {
 				t.Errorf("filename = %q; want %q", name, tc.wantFile)
 			}
+			// SPEC 7.6: the service always writes "Verified me: false" and never true.
+			if !strings.Contains(string(content), "Verified me: false") {
+				t.Errorf("missing \"Verified me: false\":\n%s", content)
+			}
 			golden := filepath.Join("testdata", "golden", tc.name+".md")
 			if *update {
 				if err := os.WriteFile(golden, content, 0o644); err != nil {

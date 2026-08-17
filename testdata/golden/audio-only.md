@@ -4,6 +4,7 @@ recordingId: 01J8XQ4T7V
 source: index-01
 tags:
   - index
+Verified me: false
 ---
 
 ![[01J8XQ4T7V.m4a]]

@@ -176,11 +176,9 @@ This is the **first mutation path** in a system whose correctness story is built
 - Skip any note modified in the last hour, so the scorer never races the owner editing in Obsidian.
 - Never touch a note the scorer did not derive a score for.
 
-## 10a. Known gap between spec and code
+## 10a. Gap between spec and code, closed
 
-`SPEC.md` section 7.6 now requires the ingest service to write `Verified me: false` into every note's frontmatter. **The Go service does not do this yet.** It is a one-line addition to the frontmatter struct plus a golden-file update.
-
-Until that ships, the scorer sees no tick boxes and every note scores `no-gallery`. Deploying the scorer before that change is harmless but useless.
+`SPEC.md` section 7.6 requires the ingest service to write `Verified me: false` into every note's frontmatter. The Go service now does this.
 
 ## 11. What is still unproven
 

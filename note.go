@@ -110,6 +110,7 @@ type frontmatter struct {
 	Truncated              bool      `yaml:"truncated,omitempty"`
 	ClockSource            string    `yaml:"clockSource,omitempty"`
 	RecordingIDSynthesised bool      `yaml:"recordingIdSynthesised,omitempty"`
+	VerifiedMe             bool      `yaml:"Verified me"` // owner ticks in Obsidian; the service only ever writes false (VOICE.md section 6)
 	AudioSizeMismatch      bool      `yaml:"audioSizeMismatch,omitempty"`
 }
 
