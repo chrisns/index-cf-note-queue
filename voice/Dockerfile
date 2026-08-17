@@ -23,6 +23,16 @@ ENV PATH="/app/.venv/bin:$PATH"
 # VOICE.md section 4: set this so SpeechBrain cannot silently reach out to
 # Hugging Face when VOICE_MODEL_DIR / the mounted volume is wrong.
 ENV HF_HUB_OFFLINE=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Non-root, matching the Go service's USER 65532:65532 (SPEC.md section 8.2)
+# so the same numeric runAsUser/runAsNonRoot hardening applies here too.
+# HOME=/tmp: the only writable path under a read-only root filesystem is the
+# /tmp emptyDir the Deployment mounts, so anything defaulting to $HOME/.cache
+# (torch, huggingface_hub) lands there instead of failing to create ~/.cache.
+RUN chown -R 65532:65532 /app
+USER 65532:65532
+ENV HOME=/tmp
 
 EXPOSE 8081
 
