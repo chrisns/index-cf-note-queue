@@ -261,6 +261,7 @@ tags:
 | `truncated` | `true` only when the body was cut short |
 | `clockSource` | `server` only on the clock fallback |
 | `recordingIdSynthesised` | `true` only when the id was generated |
+| `Verified me` | always written as `false`. The owner ticks it in Obsidian to confirm the note is their own voice. The service writes it once and never reads it; only the voice scorer reads it. See [VOICE.md](VOICE.md) section 6. |
 | `audioSizeMismatch` | `true` when the received audio byte count differs from `X-Audio-Size` |
 
 ### 7.7 Body
