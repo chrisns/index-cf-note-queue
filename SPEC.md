@@ -316,12 +316,18 @@ There is no `worker/` directory, no `wrangler.jsonc` and no Cloudflare API token
 Call the house workflow. It exposes a `platforms` input, so narrowing is a caller argument, not a fork.
 
 ```yaml
+permissions:
+  packages: write
+  id-token: write
+
 jobs:
   build:
     uses: chrisns/.github/.github/workflows/dockerbuild.yml@<sha> # main
     with:
       platforms: linux/amd64,linux/arm64
 ```
+
+The `permissions` block is required, not decoration. This repository defaults `GITHUB_TOKEN` to **read-only**, a called workflow cannot exceed its caller, and the shared workflow needs `packages: write` to push and `id-token: write` for cosign. Without it GitHub refuses the run with `startup_failure` and no job logs, because the failure happens before any job starts. Older repositories such as `docker-bb` omit the block only because they default to write.
 
 It pushes to `ghcr.io/chrisns/index-cf-note-queue` on the default branch only, tags with the `semver-generator` output plus `sha-<long>`, `edge` and `latest`, and signs with cosign in a separate job. It reads `.github/semver.yaml`, which is already templated and seeded at major 1.
 

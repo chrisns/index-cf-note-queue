@@ -1,6 +1,13 @@
 name: Docker build
 on: [push]
 
+# This repository defaults GITHUB_TOKEN to read-only. A called workflow cannot
+# exceed its caller, and dockerbuild.yml needs packages: write to push and
+# id-token: write to sign, so the caller must grant both explicitly.
+permissions:
+  packages: write
+  id-token: write
+
 jobs:
   build:
     uses: chrisns/.github/.github/workflows/dockerbuild.yml@cebabbbee67cc9cc55c233518fcf9a7fa5f2d67d # main
