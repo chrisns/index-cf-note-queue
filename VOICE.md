@@ -73,6 +73,8 @@ An honest note on size: the weights are the *small* part. ECAPA is roughly 80 MB
 
 Because the model is no longer pinned by the image, `voiceModel` in the frontmatter stops being a nicety and becomes the only record of what produced a given score. Bump it whenever the volume contents change.
 
+**Populating the volume, first deployment 2026-08-18.** Fetch these five files from the `speechbrain/spkrec-ecapa-voxceleb` Hugging Face repo and place them flat in `VOICE_MODEL_DIR`: `hyperparams.yaml`, `embedding_model.ckpt`, `mean_var_norm_emb.ckpt`, `classifier.ckpt`, and `label_encoder.txt` **saved a second time as `label_encoder.ckpt`**. SpeechBrain's `Pretrainer` names every loadable's local file `<loadable key>.ckpt` regardless of the source filename — `label_encoder` is the one loadable whose real filename does not already end in `.ckpt`, so without the renamed copy present, `fetch()` cannot find a local match and tries Hugging Face anyway, which fails loudly under `HF_HUB_OFFLINE=1`. The other four filenames already match their loadable key and need no renaming.
+
 ## 5. The scoring pass
 
 1. Build the gallery: embed every note whose frontmatter has `Verified me: true` (section 6), reusing cached embeddings from `STATE_DIR` where present.
