@@ -20,8 +20,9 @@ import (
 )
 
 var (
-	london  *time.Location
-	timeNow = time.Now // swapped in tests
+	london   *time.Location
+	timeNow  = time.Now // swapped in tests
+	chmodDir = os.Chmod // swapped in tests
 )
 
 type server struct {
@@ -105,8 +106,11 @@ func prepareVault(vault string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("VAULT_DIR %q is not a directory", vault)
 	}
-	if err := os.Chmod(vault, 0o755); err != nil {
-		return fmt.Errorf("chmod VAULT_DIR: %w", err)
+	// Best effort. The provisioner creates this directory as root:root 0777 on
+	// NFS, and the pod runs unprivileged with every capability dropped, so
+	// chmod is denied. The probe write below is the real gate (SPEC 6.7).
+	if err := chmodDir(vault, 0o755); err != nil {
+		log.Printf("startup: could not tighten VAULT_DIR mode, continuing: %v", err)
 	}
 	probe, err := os.CreateTemp(vault, ".probe-*")
 	if err != nil {

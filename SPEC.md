@@ -143,7 +143,7 @@ Log once and exit non-zero when any of these fails. Fail at deploy, not at 3am.
 
 1. `INDEX_BEARER_TOKENS` is set, is non-empty after splitting on commas, and every entry is at least 32 bytes. An empty entry makes an expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
 2. `VAULT_DIR` exists, and a probe file can be created and removed inside it.
-3. The service sets `VAULT_DIR` to mode `0755`. It cannot `chown` with every capability dropped; the probe write is what proves the directory is usable, and the provisioner creating it world-writable is the accepted mechanism.
+3. `VAULT_DIR` accepts a probe write, which is then removed. The service also attempts to tighten the directory to `0755`, but that is **best effort and must never be fatal**. Verified on the real cluster: `nfs-subdir-external-provisioner` creates the directory `root:root 0777`, so an unprivileged pod with every capability dropped can write to it but cannot `chmod` or `chown` it. The probe write is the only real gate.
 4. `time.LoadLocation("Europe/London")` succeeds. The binary must `import _ "time/tzdata"`, because a `scratch` image has no zoneinfo and the fallback is a silent switch to UTC.
 
 The startup probe replaces a one-off manual write check. A `scratch` image has no shell, so nobody can `exec` into the pod to run one.

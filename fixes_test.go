@@ -95,3 +95,41 @@ func TestSynthesisedAudioCollisionRegenerates(t *testing.T) {
 		}
 	}
 }
+
+// SPEC 6.7: the vault directory arrives root-owned 0777 from the NFS
+// provisioner, so an unprivileged pod cannot chmod it. That must not stop
+// startup; the probe write is the real gate.
+func TestPrepareVaultSurvivesUndeniableChmod(t *testing.T) {
+	fixClock(t, time.Date(2026, 8, 17, 6, 0, 0, 0, london))
+	old := chmodDir
+	chmodDir = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { chmodDir = old })
+
+	vault := t.TempDir()
+	if err := prepareVault(vault); err != nil {
+		t.Fatalf("prepareVault must survive a denied chmod, got: %v", err)
+	}
+	for _, sub := range []string{"2026", attachmentsDir} {
+		if _, err := os.Stat(filepath.Join(vault, sub)); err != nil {
+			t.Errorf("expected %s to be created: %v", sub, err)
+		}
+	}
+}
+
+// A vault that cannot be written is still fatal: that is the real gate.
+// Mirrors production, where the chmod is denied as well, so it cannot quietly
+// make the directory writable again.
+func TestPrepareVaultFailsWhenUnwritable(t *testing.T) {
+	old := chmodDir
+	chmodDir = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { chmodDir = old })
+
+	vault := t.TempDir()
+	if err := os.Chmod(vault, 0o500); err != nil {
+		t.Skip("cannot make a read-only dir here")
+	}
+	t.Cleanup(func() { os.Chmod(vault, 0o755) })
+	if err := prepareVault(vault); err == nil {
+		t.Fatal("prepareVault must fail when the vault cannot be written")
+	}
+}
