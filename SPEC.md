@@ -461,7 +461,7 @@ The Ruleset Engine phases run in this order: `ddos_l7`, WAF custom rules, rate l
 Running beside all of that, with no documented position: **Bot Fight Mode**, **Browser Integrity Check**, Security Level, IP Access Rules, User Agent Blocking, Zone Lockdown.
 
 - **Browser Integrity Check is on by default.** It challenges clients with an absent or non-standard user agent, which describes the ring exactly. It is the likeliest cause of a lost first note. It can be skipped.
-- **Bot Fight Mode is opt-in and off by default.** It **cannot** be skipped per hostname on the Free plan, because it does not run on the Ruleset Engine. Choosing this design means `cns.me` gives up Bot Fight Mode permanently.
+- **Bot Fight Mode is opt-in and off by default.** Verified off on `cns.me` on 2026-08-17. It **cannot** be skipped per hostname on the Free plan, because it does not run on the Ruleset Engine. Choosing this design means `cns.me` gives up Bot Fight Mode permanently. Turning it on later silently breaks note delivery.
 - **The Cloudflare Free Managed Ruleset is deployed by default.** The skip rule takes it off this path.
 - **Cloudflare Access is not used.** It runs after the challenge phases, so it protects nothing from them. Its default service token lifetime of 8760 hours is a scheduled silent outage, and an unauthenticated request can get a redirect that a redirect-following client reports as success.
 
@@ -470,11 +470,12 @@ Running beside all of that, with no documented position: **Bot Fight Mode**, **B
 1. One DNS record for `index-note`, a CNAME to `<tunnel-uuid>.cfargotunnel.com`, **proxied**. `cloudflared tunnel route dns <tunnel> index-note.cns.me` creates it. A grey cloud means the hostname does not resolve at all.
 2. Bot Fight Mode **off**. Confirm it, and never turn it on for this zone again.
 3. Under Attack mode off. Security level is not `under_attack`.
-4. A WAF custom rule, action **Skip**:
-   - expression: `http.host eq "index-note.cns.me" and http.request.method eq "POST" and http.request.uri.path eq "/note"`
-   - skip: **Browser Integrity Check** and the `http_request_firewall_managed` phase
-   - leave `http_ratelimit` in force
-5. No IP Access Rule, User Agent Blocking rule, Zone Lockdown or rate limiting rule matches the hostname.
+4. **Applied 2026-08-17.** A **Configuration Rule**, not a WAF custom rule. Browser Integrity Check is not skippable from the WAF phases, but a configuration rule turns it off for matching requests only, leaving the rest of the zone protected:
+   - name: `index-note ring webhook: no Browser Integrity Check`
+   - expression: `(http.host eq "index-note.cns.me" and http.request.method eq "POST" and http.request.uri.path eq "/note")`
+   - setting: Browser Integrity Check **off**
+   - verified with the ring's own user agent, `CoreApp/1.8.0.6-1-g4546d7b2f`: 200
+5. **Verified 2026-08-17, nothing to do.** This zone has **0 of 5** custom rules, **0 of 1** rate limiting rules, and no managed rules, which the Free plan gates behind an upgrade. Confirmed empirically as well: a body carrying SQLi, XSS and traversal patterns returned 200, so nothing inspects this path. The `http_request_firewall_managed` and `http_ratelimit` skips the earlier research called for are neither needed nor possible here. Re-check this if a rule is ever added to the zone.
 6. No Cloudflare Access application on the hostname.
 7. The ring posts to `https://` explicitly. A 301 from Always Use HTTPS turns the POST into a GET.
 8. There is no split-horizon DNS on the LAN. Confirmed: `*.p.cns.me` are public records holding private addresses, so Cloudflare is the only path to this hostname.
