@@ -1,5 +1,7 @@
 name: Docker build
-on: [push]
+on:
+  push:
+    paths-ignore: ["voice/**"]
 
 # This repository defaults GITHUB_TOKEN to read-only. A called workflow cannot
 # exceed its caller, and dockerbuild.yml needs packages: write to push and

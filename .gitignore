@@ -1,5 +1,12 @@
 /index-cf-note-queue
 /index-note
 
+# Python (voice/)
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
 # Added by ggshield
 .cache_ggshield
