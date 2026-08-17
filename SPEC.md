@@ -98,6 +98,19 @@ Compare `sha256.Sum256` of the presented token against `sha256.Sum256` of each v
 
 A bad or missing bearer returns **401**. Nothing is written, and nothing is buffered anywhere.
 
+### 6.2.1 The ring identifier, a second factor
+
+The `audio` part's filename begins with an identifier specific to the ring, shaped `ring_<device uuid>-<counter>-<per recording uuid>`. That device UUID **identifies the hardware, so it is a secret**. It must never appear in git, in a manifest, in a test fixture or in a commit message.
+
+`INDEX_RING_PREFIXES` holds a comma-separated list of allowed prefixes, supplied the same way as the bearer. A request whose audio filename does not start with one of them returns **401** and writes nothing. A leaked bearer is then not sufficient to write into the vault.
+
+Two deliberate limits:
+
+- A note with **no audio part** carries no identifier and cannot be checked, so it passes on the bearer alone. Rejecting it would delete a real thought for something the sender cannot control.
+- The prefix check does **not** replace sanitisation (section 7.2). A valid prefix says nothing about the rest of the filename. Note that `multipart.Part.FileName` already applies `filepath.Base`, so a traversal arrives stripped and then fails the prefix check.
+
+`INDEX_RING_PREFIXES` is required at startup (section 6.7). Unset is fatal, so the check can never be silently inactive.
+
 ### 6.3 Reading the body
 
 - Wrap the body in `http.MaxBytesReader` at **16 MiB**.
@@ -142,6 +155,7 @@ Write whatever arrives. Never reject.
 Log once and exit non-zero when any of these fails. Fail at deploy, not at 3am.
 
 1. `INDEX_BEARER_TOKENS` is set, is non-empty after splitting on commas, and every entry is at least 32 bytes. An empty entry makes an expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
+1b. `INDEX_RING_PREFIXES` is set and every entry is at least 8 bytes. Unset is fatal, so the second factor in section 6.2.1 can never be silently inactive.
 2. `VAULT_DIR` exists, and a probe file can be created and removed inside it.
 3. `VAULT_DIR` accepts a probe write, which is then removed. The service also attempts to tighten the directory to `0755`, but that is **best effort and must never be fatal**. Verified on the real cluster: `nfs-subdir-external-provisioner` creates the directory `root:root 0777`, so an unprivileged pod with every capability dropped can write to it but cannot `chmod` or `chown` it. The probe write is the only real gate.
 4. `time.LoadLocation("Europe/London")` succeeds. The binary must `import _ "time/tzdata"`, because a `scratch` image has no zoneinfo and the fallback is a silent switch to UTC.
@@ -150,7 +164,7 @@ The startup probe replaces a one-off manual write check. A `scratch` image has n
 
 ### 6.8 Logging
 
-Log the method, path, status, byte count and duration.
+Log the method, path, status, byte count and duration. **Do not log `/healthz`.** The kubelet probes both replicas every few seconds, and those lines say nothing while burying the requests that matter.
 
 - **Never** log the bearer.
 - **Never** log the transcription text. It is the private content this system exists to move.
@@ -177,7 +191,7 @@ Files are `0644`, directories `0755`. Apply the mode with an explicit `Chmod`. `
 It arrives only as the `audio` part's filename. It must be used, and never raw. The destination is a shared volume, and `../../` reaches real files.
 
 1. NFKD-normalise, then keep only `[A-Za-z0-9_-]`.
-2. Truncate to 63 bytes.
+2. Truncate to 192 bytes. Real ring ids are about 82 bytes, so a tighter cap silently truncated every one of them and risked two recordings sharing an id. 192 keeps `<id>.m4a` well inside the 255-byte filename limit.
 3. Require at least one `[A-Za-z0-9]` and no leading hyphen.
 
 If the result is unusable, **do not reject the note**. Synthesise an id from the timestamp and a short random suffix, and set `recordingIdSynthesised: true` in the frontmatter. The synthesised id exists to name the audio file.
@@ -392,6 +406,7 @@ Environment:
 | Variable | Value |
 |---|---|
 | `INDEX_BEARER_TOKENS` | from the Secret, comma-separated |
+| `INDEX_RING_PREFIXES` | from the Secret, comma-separated. Identifies the hardware, so never in git |
 | `VAULT_DIR` | `/vault` |
 | `TZ` | `Europe/London` |
 | `LISTEN_ADDR` | `:8080` |
@@ -428,6 +443,7 @@ One `secretGenerator` over a gitignored `.env`, plus the credentials file.
 | Item | Source |
 |---|---|
 | `INDEX_BEARER_TOKENS` | `.env`, each entry 32 bytes from a CSPRNG, comma-separated |
+| `INDEX_RING_PREFIXES` | `.env`, read from a real note's `recordingId`. **Secret: identifies the ring.** |
 | `credentials.json` | the credentials file `cloudflared tunnel create` writes, renamed and added as a file entry. A fixed name keeps the config independent of the tunnel uuid. |
 
 Add both filenames to `chrisns/infra/.gitignore` in the same commit that adds the app. The repository's own `.gitignore` must carry them, not only the operator's global one.

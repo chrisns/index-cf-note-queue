@@ -28,6 +28,7 @@ var (
 type server struct {
 	vault        string
 	tokenDigests [][32]byte
+	ringPrefixes []string
 }
 
 func main() {
@@ -69,6 +70,10 @@ func startup() (*server, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	prefixes, err := parseRingPrefixes(os.Getenv("INDEX_RING_PREFIXES"))
+	if err != nil {
+		return nil, "", err
+	}
 	vault := os.Getenv("VAULT_DIR")
 	if vault == "" {
 		return nil, "", errors.New("VAULT_DIR is not set")
@@ -80,7 +85,24 @@ func startup() (*server, string, error) {
 	if listen == "" {
 		listen = ":8080"
 	}
-	return &server{vault: vault, tokenDigests: digests}, listen, nil
+	return &server{vault: vault, tokenDigests: digests, ringPrefixes: prefixes}, listen, nil
+}
+
+// parseRingPrefixes reads the allowed recording-id prefixes. Each one embeds a
+// device identifier, so it is a secret and never belongs in git (SPEC 6.2).
+func parseRingPrefixes(env string) ([]string, error) {
+	if env == "" {
+		return nil, errors.New("INDEX_RING_PREFIXES is not set")
+	}
+	var out []string
+	for _, p := range strings.Split(env, ",") {
+		p = strings.TrimSpace(p)
+		if len(p) < 8 {
+			return nil, fmt.Errorf("INDEX_RING_PREFIXES entry %q is too short to identify a ring", p)
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func parseTokens(env string) ([][32]byte, error) {
@@ -181,6 +203,12 @@ func truncLog(s string) string {
 
 func logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The kubelet probes /healthz on both replicas every few seconds. Logging
+		// that says nothing and buries the requests that matter.
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		cr := &countingReader{rc: r.Body}
 		r.Body = cr

@@ -37,6 +37,10 @@ type note struct {
 	audioSizeMismatch bool
 }
 
+// maxRecordingID caps the sanitised id. Observed real ids are 82 bytes; the
+// filesystem limit is 255 for "<id>.m4a".
+const maxRecordingID = 192
+
 func isAlnum(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
@@ -51,8 +55,11 @@ func sanitiseRecordingID(filename string) (string, bool) {
 		}
 	}
 	id := b.String()
-	if len(id) > 63 {
-		id = id[:63]
+	// Real ring ids are about 82 bytes ("ring_<uuid>-<seq>-<uuid>"), so a
+	// tighter cap silently truncated every id and could make two recordings
+	// share one. 192 keeps "<id>.m4a" well inside the 255-byte filename limit.
+	if len(id) > maxRecordingID {
+		id = id[:maxRecordingID]
 	}
 	if id == "" || id[0] == '-' || !strings.ContainsFunc(id, isAlnum) {
 		return "", false

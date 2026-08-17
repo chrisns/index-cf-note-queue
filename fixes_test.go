@@ -133,3 +133,93 @@ func TestPrepareVaultFailsWhenUnwritable(t *testing.T) {
 		t.Fatal("prepareVault must fail when the vault cannot be written")
 	}
 }
+
+// SPEC 6.2: the ring's device identifier is a secret second factor. A valid
+// bearer alone must not be enough to write into the vault.
+func TestRingPrefixIsASecondFactor(t *testing.T) {
+	fixClock(t, time.Date(2026, 8, 17, 9, 0, 0, 0, london))
+	s := newTestServer(t)
+	s.ringPrefixes = []string{"ring_00000000-1111-2222-3333-444444444444"}
+
+	for _, tc := range []struct {
+		name      string
+		audioName string
+		want      int
+	}{
+		{"known ring", "ring_00000000-1111-2222-3333-444444444444-7-abc.m4a", 200},
+		{"different ring", "ring_99999999-9999-9999-9999-999999999999-7-abc.m4a", 401},
+		{"forged short name", "ring_.m4a", 401},
+		{"no audio at all", "", 200}, // nothing to check; bearer already passed
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s.vault = t.TempDir()
+			body, ct := multipartBody(t, map[string]string{
+				"transcription": "second factor " + tc.name,
+				"recordedAt":    "1787040009000",
+			}, tc.audioName, "AUDIOBYTES")
+			if got := doNote(t, s, body, ct, nil).Code; got != tc.want {
+				t.Errorf("status = %d, want %d", got, tc.want)
+			}
+			notes, _ := filepath.Glob(filepath.Join(s.vault, "*", "*.md"))
+			if tc.want == 401 && len(notes) != 0 {
+				t.Errorf("a rejected ring must write nothing, found %v", notes)
+			}
+			if tc.want == 200 && len(notes) != 1 {
+				t.Errorf("expected exactly one note, found %v", notes)
+			}
+		})
+	}
+}
+
+func TestRingPrefixesRequiredAtStartup(t *testing.T) {
+	if _, err := parseRingPrefixes(""); err == nil {
+		t.Error("an unset INDEX_RING_PREFIXES must be fatal, not silently unprotected")
+	}
+	if _, err := parseRingPrefixes("short"); err == nil {
+		t.Error("a too-short prefix must be rejected")
+	}
+	got, err := parseRingPrefixes(" ring_aaaaaaaa-1111 , ring_bbbbbbbb-2222 ")
+	if err != nil || len(got) != 2 || got[0] != "ring_aaaaaaaa-1111" {
+		t.Errorf("parseRingPrefixes = %q, %v", got, err)
+	}
+}
+
+// Defence in depth: a filename that matches the ring prefix must still be
+// sanitised, so a traversal riding behind a valid prefix goes nowhere.
+func TestValidPrefixStillSanitises(t *testing.T) {
+	fixClock(t, time.Date(2026, 8, 17, 9, 0, 0, 0, london))
+	s := newTestServer(t)
+	prefix := "ring_00000000-1111-2222-3333-444444444444"
+	s.ringPrefixes = []string{prefix}
+
+	// A traversal is stripped by multipart.Part.FileName (filepath.Base), so it
+	// arrives as "passwd.m4a", no longer matches the ring prefix, and is
+	// rejected. Two independent layers, either of which alone would stop it.
+	trav, ct0 := multipartBody(t, map[string]string{
+		"transcription": "traversal attempt",
+		"recordedAt":    "1787040009000",
+	}, prefix+"/../../etc/passwd.m4a", "AUDIOBYTES")
+	if got := doNote(t, s, trav, ct0, nil).Code; got != 401 {
+		t.Errorf("traversal filename: status = %d, want 401", got)
+	}
+	if _, err := os.Stat("/etc/passwd.m4a"); err == nil {
+		t.Fatal("escaped the vault")
+	}
+
+	// A hostile name that survives Base and carries a valid prefix must still be
+	// sanitised down to the safe charset.
+	body, ct := multipartBody(t, map[string]string{
+		"transcription": "hostile characters behind a valid prefix",
+		"recordedAt":    "1787040009000",
+	}, prefix+"-..-..-etc-passwd$;`.m4a", "AUDIOBYTES")
+	if got := doNote(t, s, body, ct, nil).Code; got != 200 {
+		t.Fatalf("status = %d, want 200", got)
+	}
+	audio, _ := filepath.Glob(filepath.Join(s.vault, attachmentsDir, "*.m4a"))
+	if len(audio) != 1 {
+		t.Fatalf("want one attachment inside the vault, got %v", audio)
+	}
+	if strings.ContainsAny(filepath.Base(audio[0]), "/\\") {
+		t.Errorf("filename kept a path separator: %q", audio[0])
+	}
+}

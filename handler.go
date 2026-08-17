@@ -30,6 +30,30 @@ func vaultFail(w http.ResponseWriter) {
 // errVault marks a vault write failure, as opposed to a body read failure.
 var errVault = errors.New("vault write failed")
 
+// fromKnownRing reports whether the audio filename the ring sent starts with a
+// configured prefix. That prefix embeds the ring's device identifier, so it is
+// a second factor: a leaked bearer alone is not enough to write to the vault.
+//
+// A note with no audio part carries no identifier and cannot be checked, so it
+// passes on the bearer alone. Rejecting it would delete a real thought, and the
+// spec's rule is that a note is never rejected for something it cannot control.
+func (s *server) fromKnownRing(rawFilename string) bool {
+	// No prefixes configured means the check is inactive. startup() refuses to
+	// run without them, so this state is unreachable in production; it exists so
+	// tests can exercise sanitisation independently of this layer. Sanitisation
+	// is still defence in depth: a matching prefix does not make the rest safe.
+	if len(s.ringPrefixes) == 0 || rawFilename == "" {
+		return true
+	}
+	for _, p := range s.ringPrefixes {
+		if len(rawFilename) >= len(p) &&
+			subtle.ConstantTimeCompare([]byte(rawFilename[:len(p)]), []byte(p)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *server) authorised(r *http.Request) bool {
 	const prefix = "Bearer "
 	h := r.Header.Get("Authorization")
@@ -227,6 +251,13 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 		}
 		truncated = true
 		break
+	}
+
+	// Second factor, checked before anything is written. A mismatch means the
+	// audio did not come from a known ring, so there is no note of yours to lose.
+	if !s.fromKnownRing(st.rawFilename) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
 	now := timeNow().In(london)

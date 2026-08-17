@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,9 +66,17 @@ func TestSanitiseRecordingID(t *testing.T) {
 			t.Errorf("sanitiseRecordingID(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
-	long := "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop.m4a"
-	if got, ok := sanitiseRecordingID(long); !ok || len(got) != 63 {
-		t.Errorf("long id: got %d bytes, ok=%v; want 63, true", len(got), ok)
+	long := strings.Repeat("a", 300) + ".m4a"
+	if got, ok := sanitiseRecordingID(long); !ok || len(got) != maxRecordingID {
+		t.Errorf("long id: got %d bytes, ok=%v; want %d, true", len(got), ok, maxRecordingID)
+	}
+	// Shaped like a real ring id, 82 bytes: "ring_<device uuid>-<counter>-<per
+	// recording uuid>". The previous 63-byte cap truncated it mid-UUID. The
+	// device UUID here is synthetic on purpose; the real one identifies a ring.
+	real := "ring_00000000-1111-2222-3333-444444444444-999-aaaaaaaa-bbbb-cccc-dddd-ee.m4a"
+	want := strings.TrimSuffix(real, ".m4a")
+	if got, ok := sanitiseRecordingID(real); !ok || got != want {
+		t.Errorf("real ring id truncated: got %q (%d bytes), want %q (%d bytes)", got, len(got), want, len(want))
 	}
 }
 
