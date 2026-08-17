@@ -527,6 +527,12 @@ There is no way to replay a real note, and the first one is irreplaceable. So:
 10. Read Cloudflare Security Events the **same day**. Free plan retention is short. Look for any row on this hostname from Browser Integrity Check, Bot Fight Mode or Managed Rules.
 11. Only now add the block rule from section 10.3.
 
+## 12a. Voice scoring
+
+An out-of-band scorer attaches advisory metadata about whether the speaker is the owner. It is specified separately in [VOICE.md](VOICE.md).
+
+It does not affect this document except for one addition: after the note is durable and the 200 has been returned, the service pokes the scorer. That poke cannot delay or endanger the response, and a failure is swallowed. A note is **never** gated, rejected or moved on the strength of a voice score.
+
 ## 13. Out of scope
 
 - Any change to the Pebble ring or its phone app.
