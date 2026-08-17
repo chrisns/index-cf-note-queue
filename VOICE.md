@@ -69,30 +69,46 @@ It runs in the same namespace, mounts the same `ReadWriteMany` volume, and holds
 
 ## 5. The scoring pass
 
-1. Find work: every `attachments/*.m4a` with no sidecar in `.speaker/`.
-2. Decode to 16 kHz mono PCM with `ffmpeg`.
-3. Reject as `unscoreable` if speech-band duration is under **1.0 s**. Measure energy in 300–3400 Hz against energy below 200 Hz; the owner's clips carry 60–75% of their total energy below 200 Hz as handling rumble, so a naive energy VAD measures the rumble rather than the voice.
-4. Embed with **SpeechBrain ECAPA** (`speechbrain/spkrec-ecapa-voxceleb`, 192-dim). Read the WAV with the standard library `wave` module; `torchaudio.load` now requires `torchcodec` and will fail without it.
-5. Score against every gallery entry. Record **best** and **top-2 mean**.
-6. Write the sidecar, then splice the band into the note.
-7. Consider the note for gallery membership (section 6).
+1. Build the gallery: embed every note whose frontmatter has `voiceConfirmed: true` (section 6), reusing cached embeddings from `STATE_DIR` where present.
+2. Find work: every `attachments/*.m4a` with no cached record in `STATE_DIR`.
+3. Decode to 16 kHz mono PCM with `ffmpeg`.
+4. Reject as `unscoreable` if speech-band duration is under **1.0 s**. Measure energy in 300–3400 Hz against energy below 200 Hz; the owner's clips carry 60–75% of their total energy below 200 Hz as handling rumble, so a naive energy VAD measures the rumble rather than the voice.
+5. Embed with **SpeechBrain ECAPA** (`speechbrain/spkrec-ecapa-voxceleb`, 192-dim). Read the WAV with the standard library `wave` module; `torchaudio.load` now requires `torchcodec` and will fail without it.
+6. Score against every gallery entry. Record **best** and **top-2 mean**.
+7. Write the record to `STATE_DIR`, then splice the band into the note.
 
-The pass is idempotent. A note with a sidecar is skipped. Deleting a sidecar re-scores that note.
+
+The pass is idempotent. A note with a cached record is skipped. Deleting its record re-scores that note; deleting all of them plus every `voice:` key rebuilds from scratch.
+
+Gallery membership is recomputed from the tick boxes on every pass, so it is never stale.
 
 ## 6. The gallery
 
-Seeded from a curated list of `recordingId` values the owner confirms are theirs, held in a `ConfigMap`. The seven notes measured in section 2 are the initial seed.
+**The gallery is exactly the set of notes the owner has ticked.** Nothing joins it automatically.
 
-A newly scored note **joins** the gallery when its best score is **≥ 0.55**, comfortably above the measured impostor ceiling of 0.209.
+Every note carries a frontmatter property:
 
-Bounds, so the gallery cannot drift or be poisoned:
+```yaml
+voiceConfirmed: false
+```
 
-- Seeds are never removed.
-- Auto-added entries are capped at **50**, most recent kept.
-- A note is never added on a `uncertain` or `unlikely-owner` score.
-- The gallery is embeddings only. It never needs the audio again unless the model changes.
+Obsidian's Properties panel renders a `checkbox`-type property as a clickable tick box. The owner ticks the notes that are genuinely them. The scorer treats every note with `voiceConfirmed: true` as a gallery entry, and everything else as not.
 
-If the gallery is ever suspect, delete the auto-added entries and every sidecar. The next pass rebuilds from the seeds.
+A body checkbox (`- [ ]`) was considered and rejected: Obsidian treats it as a **task**, so every note would pollute task queries and the Tasks plugin.
+
+Properties of this design:
+
+- **No poisoning.** A wrong note cannot enter the gallery without a deliberate human tick.
+- **Reversible.** Untick a note and it leaves the gallery on the next pass. Membership is recomputed every time, never accumulated.
+- **No seed list, no ConfigMap.** Bootstrap is the owner ticking the notes they know are theirs.
+- **Adapts.** New registers and a changing voice are absorbed by ticking a few new notes.
+
+Rules:
+
+- A note that is `unscoreable` is never a gallery entry, even if ticked. There is too little speech to embed.
+- The scorer only ever **reads** `voiceConfirmed`. It writes it once, as `false`, when it first annotates the note, and never touches it again.
+- **The empty gallery case.** With nothing ticked, no note can be scored. Write `voice: no-gallery` and no `voiceScore`. Do not guess, and do not treat an empty gallery as evidence of anything.
+- Recomputing membership on every pass means reading the frontmatter of ticked notes only. The embeddings themselves live outside the vault (section 9), so this is cheap.
 
 ## 7. What is published
 
@@ -102,7 +118,10 @@ Into the note's frontmatter:
 voice: likely-owner
 voiceScore: 0.69
 voiceModel: ecapa-voxceleb-1
+voiceConfirmed: false
 ```
+
+`voiceConfirmed` is the gallery tick box of section 6. The scorer writes it as `false` once and never overwrites it, so a tick is never undone by a rescore.
 
 | Band | Condition | Measured headroom |
 |---|---|---|
@@ -110,6 +129,7 @@ voiceModel: ecapa-voxceleb-1
 | `uncertain` | 0.30 to 0.50 | — |
 | `unlikely-owner` | best < **0.30** | impostor ceiling is 0.2085, so 0.09 |
 | `unscoreable` | under 1.0 s of speech, or decode failure | — |
+| `no-gallery` | nothing is ticked yet, so there is nothing to compare against | — |
 
 Rules:
 
@@ -129,11 +149,13 @@ A `CronJob` on a timer would be simpler and would touch the ingest service not a
 ## 9. Storage layout
 
 ```
-<VAULT_DIR>/.speaker/<recordingId>.json     the embedding, both scores, model version, speech seconds
-<VAULT_DIR>/2026/<note>.md                  gains three frontmatter keys
+<STATE_DIR>/embeddings/<recordingId>.json   the embedding, both scores, model version, speech seconds
+<VAULT_DIR>/2026/<note>.md                  gains four frontmatter keys
 ```
 
-`.speaker/` is a dot-directory, which Obsidian does not index — invisible in the file explorer, search and graph view.
+**`STATE_DIR` is outside the vault.** A voice embedding is biometric data — a mathematical model of the owner's voice, sufficient to attempt a match elsewhere. It must never sync to other devices or to any cloud sync the vault is later attached to. The scorer needs it; Obsidian never does. Use a separate path on the same volume, or a separate volume.
+
+The only thing that enters the vault is the four frontmatter keys.
 
 ## 10. Writing into an existing note
 
@@ -141,7 +163,8 @@ This is the **first mutation path** in a system whose correctness story is built
 
 - Splice **textually**: find the closing `---`, insert the three lines, write a temp file in the **same directory**, `Chmod 0644`, `Sync`, rename, flush the parent directory.
 - Do **not** round-trip the YAML. A parser reorders keys, restyles quoting and drops comments, giving every note in the vault a gratuitous diff.
-- Skip any note already carrying `voice:`.
+- Skip any note already carrying `voice:`, unless it is being deliberately rescored.
+- **Never overwrite `voiceConfirmed`.** It is the owner's input, not the scorer's output.
 - Skip any note modified in the last hour, so the scorer never races the owner editing in Obsidian.
 - Never touch a note the scorer did not derive a score for.
 
