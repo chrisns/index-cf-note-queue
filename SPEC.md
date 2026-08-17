@@ -55,6 +55,8 @@ There is no Cloudflare Worker, no R2, no queue, no `wrangler` and no outbound ca
 | Part | Presence | Detail |
 |---|---|---|
 | `audio` | payload mode `Recording only` or `Both` | `audio/mp4`, filename `<recordingId>.m4a`, AAC-LC, mono, 16 kHz |
+
+**Measured from real notes, 2026-08-17.** Notes are **2 to 4 seconds**, not the 30 seconds assumed while charting. Bitrate is 24 to 26 kbps. File size is **not** a proxy for duration: every file carries a fixed `free` padding atom of about 23.5 KB, so a 33 KB note holds only about 9 KB of audio. Actual speech, after a speech-band voice activity check, is **under 2 seconds**. Anything that reasons about note length must use the decoded duration, never the byte count.
 | `transcription` | payload mode `Transcription only` or `Both` | plain text |
 | `recordedAt` | always | unix timestamp in milliseconds |
 | `client` | always | the literal string `ring`. **Ignored.** |
