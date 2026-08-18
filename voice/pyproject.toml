@@ -13,13 +13,17 @@ dependencies = [
 # Dockerfile) installs these. embed.py imports torch/speechbrain lazily
 # inside load_embedder() so unit tests never need this extra.
 ml = [
-    "torch",
+    # Pinned to torchaudio's own major/minor. torchaudio's compiled extension
+    # links against torch's ABI, and torchaudio stops at 2.11, so an unpinned
+    # torch resolves to 2.13 and _torchaudio.abi3.so fails to load at import.
+    # The CUDA wheels tolerated that gap by accident; the +cpu wheels do not.
+    "torch>=2.11,<2.12",
     # Declared explicitly only so [tool.uv.sources] can pin its index. It is a
     # speechbrain dependency, and speechbrain imports it at module scope, so it
     # must come from the same wheel index as torch. Left on PyPI it is built
     # against the CUDA torch and _torchaudio.abi3.so fails to load against the
     # +cpu build, which crashes the service on import.
-    "torchaudio",
+    "torchaudio>=2.11,<2.12",
     "speechbrain",
 ]
 

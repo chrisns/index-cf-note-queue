@@ -47,5 +47,23 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # Import smoke test. The unit suite never installs the ml extra (it is
+      # optional by design, see pyproject.toml), so nothing else here loads
+      # torch, torchaudio or speechbrain. A mismatched torch/torchaudio pair
+      # builds and pushes perfectly and then dies at startup with
+      # "Could not load this library: _torchaudio.abi3.so" -- which is exactly
+      # what shipped once. Ten seconds here beats finding it after a multi-GB
+      # pull onto the cluster.
+      - name: Smoke test the image imports its ml stack
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        run: |
+          docker run --rm --entrypoint python \
+            ghcr.io/chrisns/index-note-voice:sha-${{ github.sha }} -c '
+          import torch, torchaudio
+          from speechbrain.inference import EncoderClassifier
+          assert not torch.cuda.is_available(), "expected a CPU-only build"
+          print("ok torch", torch.__version__, "torchaudio", torchaudio.__version__)
+          '
+
       # ponytail: no image signing yet, add a sign job mirroring build.yml's
       # if this image is ever deployed the same way.
