@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: index-note-voice
-          image: ghcr.io/chrisns/index-note-voice:sha-2f5944919fbca20a71e49178b462cc43c1b5cac7 # bump by hand; no semver stream for this image, see .github/workflows/build-voice.yml in index-note-queue
+          image: ghcr.io/chrisns/index-note-voice:sha-f8798ee79f84cf510fdab85f120c909abde07032 # bump by hand; no semver stream for this image, see .github/workflows/build-voice.yml in index-note-queue
           env:
             - name: VAULT_DIR
               value: /vault
