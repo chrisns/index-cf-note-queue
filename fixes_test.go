@@ -5,7 +5,12 @@ package main
 // and synthesised-id audio collisions regenerating instead of dropping.
 
 import (
+	"bytes"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,5 +226,62 @@ func TestValidPrefixStillSanitises(t *testing.T) {
 	}
 	if strings.ContainsAny(filepath.Base(audio[0]), "/\\") {
 		t.Errorf("filename kept a path separator: %q", audio[0])
+	}
+}
+
+// A real audio part with no filename= parameter must not skip the ring check.
+//
+// fromKnownRing used to exempt any request whose rawFilename was empty, which
+// meant a caller holding only the bearer could send genuine audio, omit the
+// Content-Disposition filename, and write to the vault with the second factor
+// never applied. The audio was still stored. The exemption now depends on the
+// audio part being absent, which the sender cannot fake.
+func TestAudioPartWithoutFilenameStillChecksRing(t *testing.T) {
+	newBody := func(withAudio bool) (io.Reader, string) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		if withAudio {
+			h := make(textproto.MIMEHeader)
+			// name, but deliberately no filename parameter
+			h.Set("Content-Disposition", `form-data; name="audio"`)
+			h.Set("Content-Type", "audio/mp4")
+			fw, err := mw.CreatePart(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.WriteString(fw, "not-really-audio-but-a-real-part")
+		}
+		if err := mw.WriteField("transcription", "hello"); err != nil {
+			t.Fatal(err)
+		}
+		mw.Close()
+		return &buf, mw.FormDataContentType()
+	}
+
+	for _, tc := range []struct {
+		name      string
+		withAudio bool
+		want      int
+	}{
+		{"audio part with no filename is rejected", true, http.StatusUnauthorized},
+		{"no audio part at all is still exempt", false, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+			s.ringPrefixes = []string{"ring_deadbeefcafe"}
+			body, ct := newBody(tc.withAudio)
+			req := httptest.NewRequest("POST", "/note", body)
+			req.Header.Set("Content-Type", ct)
+			req.Header.Set("Authorization", "Bearer "+testToken1)
+			w := httptest.NewRecorder()
+			s.routes().ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d; want %d", w.Code, tc.want)
+			}
+			notes, _ := filepath.Glob(filepath.Join(s.vault, "*", "*.md"))
+			if tc.want == http.StatusUnauthorized && len(notes) != 0 {
+				t.Fatalf("rejected request still wrote %v", notes)
+			}
+		})
 	}
 }

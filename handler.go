@@ -37,12 +37,18 @@ var errVault = errors.New("vault write failed")
 // A note with no audio part carries no identifier and cannot be checked, so it
 // passes on the bearer alone. Rejecting it would delete a real thought, and the
 // spec's rule is that a note is never rejected for something it cannot control.
-func (s *server) fromKnownRing(rawFilename string) bool {
+//
+// hasAudioPart, not rawFilename == "", decides that exemption. filename is a
+// caller-supplied Content-Disposition parameter, so keying the exemption off it
+// let anyone with the bearer send a real audio part and simply omit the
+// filename to skip the second factor entirely -- the audio was still stored.
+// Absence of the part is the thing the sender cannot fake.
+func (s *server) fromKnownRing(rawFilename string, hasAudioPart bool) bool {
 	// No prefixes configured means the check is inactive. startup() refuses to
 	// run without them, so this state is unreachable in production; it exists so
 	// tests can exercise sanitisation independently of this layer. Sanitisation
 	// is still defence in depth: a matching prefix does not make the rest safe.
-	if len(s.ringPrefixes) == 0 || rawFilename == "" {
+	if len(s.ringPrefixes) == 0 || !hasAudioPart {
 		return true
 	}
 	for _, p := range s.ringPrefixes {
@@ -255,7 +261,7 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 
 	// Second factor, checked before anything is written. A mismatch means the
 	// audio did not come from a known ring, so there is no note of yours to lose.
-	if !s.fromKnownRing(st.rawFilename) {
+	if !s.fromKnownRing(st.rawFilename, st.audioTmp != nil) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
