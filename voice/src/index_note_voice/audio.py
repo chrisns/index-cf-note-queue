@@ -34,8 +34,16 @@ class AudioDecodeError(Exception):
 #   * RUMBLE_RATIO_THRESHOLD was 1.0, which required the 300-3400Hz band to
 #     out-energise the <200Hz band outright. Those clips run 0.018-0.135 on
 #     that ratio, so the gate could never pass. Candidate speech frames bottom
-#     out at 0.005; a pure <200Hz tone reaches only ~1e-28. 0.001 sits 5x below
-#     the quietest real speech frame and ~25 orders of magnitude above rumble.
+#     out at 0.005, so the threshold is 0.001.
+#   * That threshold only separates voice from rumble because the frame is
+#     Hann-windowed first. With the rectangular window this used to use, a pure
+#     <200Hz tone leaks across the whole spectrum and scores 0.007-0.063 on the
+#     speech/rumble ratio -- inside the 0.018-0.135 band real speech occupies,
+#     so no threshold could tell them apart. The single exception is a tone
+#     sitting exactly on an FFT bin centre, which leaks nothing: bins are
+#     16000/480 = 33.333Hz apart, so 100Hz is exactly bin 3 and measures 1e-28.
+#     Calibrating on 100Hz alone is what hid this. Hann drops the leakage to
+#     1e-6..8e-5 and leaves genuine speech energy untouched.
 # The remaining constants, and the 0.1 fraction itself, are still uncalibrated
 # placeholders. VOICE.md section 11 is explicit that the band thresholds in its
 # own table come from only nine recordings -- "a starting point, not a
@@ -138,12 +146,17 @@ def speech_band_seconds(samples: list[int], sample_rate: int) -> float:
     # below), not just the self-relative peak check.
     rumble_mask = freqs < 200
 
+    # Hann, not rectangular. A rectangular window smears a pure <200Hz tone
+    # across the speech band at a level indistinguishable from real speech,
+    # which makes the rumble ratio below meaningless. See the note above.
+    window = np.hanning(frame_len)
+
     num_frames = 1 + (len(arr) - frame_len) // hop_len
     speech_energy = np.empty(num_frames)
     rumble_energy = np.empty(num_frames)
     for i in range(num_frames):
         start = i * hop_len
-        frame = arr[start : start + frame_len]
+        frame = arr[start : start + frame_len] * window
         power = np.abs(np.fft.rfft(frame)) ** 2
         speech_energy[i] = power[speech_mask].sum()
         rumble_energy[i] = power[rumble_mask].sum()

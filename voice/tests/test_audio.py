@@ -55,11 +55,18 @@ def test_speech_band_seconds_100hz_tone_does_not_dominate_1khz():
     assert 0.8 <= seconds <= 1.15
 
 
-def test_speech_band_seconds_pure_rumble_tone_is_not_speech():
+@pytest.mark.parametrize("freq", [80, 100, 110, 120, 150, 180])
+def test_speech_band_seconds_pure_rumble_tone_is_not_speech(freq):
     # A tone entirely inside the <200Hz rumble band, nothing else in the
     # clip -- the realistic all-rumble-no-voice case VOICE.md section 5
     # step 4 exists to reject.
-    samples = sine_samples(100, 2.0)
+    #
+    # Parametrised deliberately. This test used to pass 100Hz only, and 100Hz
+    # is the one rumble frequency that cannot expose a leaky window: FFT bins
+    # here are 16000/480 = 33.333Hz apart, so 100Hz lands exactly on bin 3 and
+    # leaks nothing. Every off-bin frequency did leak, hard enough that 3s of
+    # pure rumble measured 2.985s of "speech" and got embedded and scored.
+    samples = sine_samples(freq, 2.0)
     seconds = audio.speech_band_seconds(samples, SAMPLE_RATE)
     assert seconds < 1.0
 
