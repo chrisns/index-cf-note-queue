@@ -81,19 +81,35 @@ def test_read_flags_not_already_scored_by_default(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_all_notes_globs_year_dirs_and_excludes_attachments(tmp_path):
+def test_all_notes_finds_notes_at_any_depth_and_excludes_attachments(tmp_path):
+    # Any depth and any folder name, so a layout change (or simply the year
+    # rolling over) never hides captures from the scorer. Notes without a
+    # recordingId are the callers' business, not this function's.
     (tmp_path / "2026").mkdir()
+    (tmp_path / "2027" / "q1").mkdir(parents=True)
     (tmp_path / "attachments").mkdir()
     write_note(tmp_path / "2026" / "a.md")
-    write_note(tmp_path / "2026" / "b.md")
+    write_note(tmp_path / "2027" / "q1" / "b.md")
+    write_note(tmp_path / "loose.md")
     (tmp_path / "attachments" / "01J8XQ4T7V.m4a").write_bytes(b"fake audio")
-    # A non-note file dropped straight in the vault root must not appear.
-    (tmp_path / "readme.md").write_text("no", encoding="utf-8")
+    # Anything under attachments/ stays invisible, whatever its extension.
+    write_note(tmp_path / "attachments" / "sidecar.md")
 
     notes = splice.all_notes(str(tmp_path))
     assert sorted(notes) == sorted(
-        [str(tmp_path / "2026" / "a.md"), str(tmp_path / "2026" / "b.md")]
+        [
+            str(tmp_path / "2026" / "a.md"),
+            str(tmp_path / "2027" / "q1" / "b.md"),
+            str(tmp_path / "loose.md"),
+        ]
     )
+
+
+def test_all_notes_still_finds_a_note_in_a_future_year(tmp_path):
+    # Regression for the year-scoped glob: 2027 and beyond must just work.
+    (tmp_path / "2031").mkdir()
+    write_note(tmp_path / "2031" / "c.md")
+    assert splice.all_notes(str(tmp_path)) == [str(tmp_path / "2031" / "c.md")]
 
 
 def test_all_notes_empty_vault(tmp_path):

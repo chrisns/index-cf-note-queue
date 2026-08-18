@@ -13,7 +13,6 @@ freely.
 """
 from __future__ import annotations
 
-import glob
 import os
 import tempfile
 from dataclasses import dataclass
@@ -65,10 +64,20 @@ def read_flags(note_path: str) -> NoteFlags:
 
 
 def all_notes(vault_dir: str) -> list[str]:
-    # Four-digit year directories only (SPEC.md section 7.1). This glob
-    # already excludes attachments/ -- that name isn't four digits -- but
-    # the exclusion is intentional, not incidental.
-    return glob.glob(os.path.join(vault_dir, "[0-9][0-9][0-9][0-9]", "*.md"))
+    """Every .md in the vault, at any depth, except under attachments/.
+
+    Deliberately not scoped to four-digit year directories. Where SPEC.md
+    section 7.1 files a note is the writer's business, and a note is a capture
+    because it carries a recordingId, not because of the folder it sits in.
+    Both callers already gate on that recordingId, so a stray note without one
+    costs a frontmatter read and is then ignored. Scoping by year meant the
+    scorer silently stopped seeing new captures whenever the layout changed.
+    """
+    notes = []
+    for root, dirs, files in os.walk(vault_dir):
+        dirs[:] = [d for d in dirs if d != "attachments"]
+        notes.extend(os.path.join(root, f) for f in files if f.endswith(".md"))
+    return notes
 
 
 def splice_voice_fields(
