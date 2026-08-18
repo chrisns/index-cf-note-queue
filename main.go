@@ -30,6 +30,8 @@ type server struct {
 	tokenDigests   [][32]byte
 	ringPrefixes   []string
 	voiceScorerURL string
+	vaultPokeURL   string
+	vaultPokeToken string
 }
 
 func main() {
@@ -89,7 +91,9 @@ func startup() (*server, string, error) {
 	// VOICE_SCORER_URL is optional: the voice scorer (VOICE.md) is an
 	// out-of-band advisory feature, unlike the bearer and ring prefixes.
 	// Unset means no poke, not a startup failure.
-	return &server{vault: vault, tokenDigests: digests, ringPrefixes: prefixes, voiceScorerURL: os.Getenv("VOICE_SCORER_URL")}, listen, nil
+	srv := &server{vault: vault, tokenDigests: digests, ringPrefixes: prefixes, voiceScorerURL: os.Getenv("VOICE_SCORER_URL")}
+	srv.vaultPokeURL, srv.vaultPokeToken = vaultPokeFromEnv()
+	return srv, listen, nil
 }
 
 // parseRingPrefixes reads the allowed recording-id prefixes. Each one embeds a

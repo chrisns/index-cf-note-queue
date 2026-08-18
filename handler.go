@@ -315,4 +315,5 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 	// Once the markdown is in place, 200 whatever happens afterwards.
 	w.WriteHeader(http.StatusOK)
 	s.pokeVoiceScorer()
+	s.pokeVaultSync()
 }
