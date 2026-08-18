@@ -17,6 +17,19 @@ ml = [
     "speechbrain",
 ]
 
+# CPU-only torch. The default PyPI wheel bundles the CUDA runtime and pulls the
+# nvidia-* packages with it, which is roughly 23GB on disk once extracted. No
+# node in this cluster has a GPU, so none of that is reachable code. It is also
+# not free: pulling the CUDA image pushed node k3s past its ephemeral-storage
+# threshold and the kubelet evicted this pod and obsidian with it.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [dependency-groups]
 dev = [
     "pytest",
