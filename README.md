@@ -13,7 +13,11 @@ This README gives an overview. Two files hold the full specification. This proje
 
 ## Why it exists
 
-The ring app has no retry. It sends one POST. On failure, it silently discards the recording. Every design decision in this repository follows from that one fact. See [SPEC.md section 1](SPEC.md#1-the-one-rule) for the full reasoning.
+The Pebble Index app already writes its notes into Obsidian on its own. That sync only runs when the Obsidian mobile app is open. A note can sit unsynced for hours, until someone remembers to open the app.
+
+This project makes the write happen immediately, over a webhook. Two things follow from that. An automation can act on a note the moment it arrives. The note also reaches a laptop straight away, with no need to open the phone app first.
+
+That immediate write creates a new problem. The ring app has no retry. It sends one POST. On failure, it silently discards the recording. Every design decision in this repository follows from that one fact. See [SPEC.md section 1](SPEC.md#1-the-one-rule) for the full reasoning.
 
 ## How a note gets from the ring to the vault
 
@@ -78,7 +82,11 @@ There is no Ingress. There is no public route beyond `POST /note`. Neither servi
 
 Manifests live in a separate repository named `chrisns/infra`. Apply them by hand with `kubectl apply -k`. There is no GitOps controller. See [SPEC.md section 9](SPEC.md#9-kubernetes) and [VOICE.md section 4](VOICE.md#4-components).
 
+The [`deploy/`](deploy/) directory in this repository holds illustrative copies of those manifests. They are a snapshot, not a live source. See [`deploy/README.md`](deploy/README.md) for what that means.
+
 ## How a note gets a voice score
+
+The voice scorer began as a side project, not a requirement. It exists because scoring a voice is an interesting problem, not because this system needed it. See [VOICE.md section 1](VOICE.md#1-what-this-is-and-what-it-is-not) for why it is not a security control. It never will be.
 
 ```mermaid
 flowchart LR

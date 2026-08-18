@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Same namespace as index-note (VOICE.md section 4: "it runs in the same
+# namespace"). No namespace.yaml here -- ../index-note/ already creates it;
+# apply that kustomization first.
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+
+namespace: index-note

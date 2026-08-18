@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: index-note-voice
+spec:
+  # One replica, deliberately not two like index-note: the sweep debounce
+  # lock (VOICE.md section 8) is in-process only, so two replicas would run
+  # two independent hourly sweeps against the same vault. A brief outage
+  # during a rolling restart is accepted -- this workload is advisory and
+  # never gates a note (VOICE.md section 1), unlike index-note itself
+  # (SPEC.md section 3).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: index-note-voice
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: index-note-voice
+    spec:
+      containers:
+        - name: index-note-voice
+          image: ghcr.io/chrisns/index-note-voice:sha-55c13b4d0ec370193f36d6aa2784eeeead6f0373 # bump by hand; no semver stream for this image, see .github/workflows/build-voice.yml in index-note-queue
+          env:
+            - name: VAULT_DIR
+              value: /vault
+            # One PVC holds both -- the model weights and the scorer's own
+            # state cache -- rather than the two-volume split VOICE.md
+            # section 4 originally described. Nothing but STATE_DIR is ever
+            # written by this service, so a single ReadWriteMany PVC is
+            # enough; the storage class provisions it.
+            - name: VOICE_MODEL_DIR
+              value: /data/models
+            - name: STATE_DIR
+              value: /data/state
+            - name: LISTEN_ADDR
+              value: ":8081"
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          # torch + speechbrain need real headroom; the Go service's 64Mi/128Mi
+          # would not fit even the import, let alone a loaded ECAPA model.
+          # These are a starting estimate, not a measurement -- watch actual
+          # usage after the first deploy and adjust.
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            # The model loads once at startup before the server binds
+            # (VOICE.md section 5 step 5); give it real time before probing.
+            initialDelaySeconds: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+          volumeMounts:
+          - mountPath: /vault
+            name: vault
+          - mountPath: /data
+            name: data
+          # decode_to_wav (audio.py) writes its temp WAV via the platform
+          # default temp dir, not a mounted path -- readOnlyRootFilesystem
+          # needs somewhere writable for that. HOME is also set to /tmp in
+          # the image so torch/huggingface_hub's default ~/.cache lands here.
+          - mountPath: /tmp
+            name: tmp
+      volumes:
+      # Same vault PVC index-note itself mounts (VOICE.md section 4: "mounts
+      # the same ReadWriteMany volume"), claimed by ../index-note/pvc.yaml.
+      - name: vault
+        persistentVolumeClaim:
+          claimName: index-note
+      - name: data
+        persistentVolumeClaim:
+          claimName: index-note-voice
+      - name: tmp
+        emptyDir: {}
