@@ -25,17 +25,28 @@ class AudioDecodeError(Exception):
     """Raised when ffmpeg cannot decode src_path, or src_path is missing."""
 
 
-# VOICE.md section 5 step 4 + section 11: the window shape, overlap and
-# thresholds below are uncalibrated placeholders. VOICE.md section 11 is
-# explicit that the band thresholds in its own table come from only nine
-# recordings -- "a starting point, not a calibration" -- and these four
-# constants are one step further removed than that: nobody has yet checked
-# them against labelled owner/impostor audio at all. Revisit once such audio
+# Measured against the first 11 owner-ring clips (2.1-5.8s each), which the
+# previous constants rejected 11 times out of 11:
+#   * The reference level is the PEAK_PERCENTILE-th percentile of in-band frame
+#     energy, not the maximum. A single handling click sets a maximum up to
+#     14.5x the 95th percentile, and RELATIVE_SPEECH_THRESHOLD of that click
+#     sits above every genuinely spoken frame.
+#   * RUMBLE_RATIO_THRESHOLD was 1.0, which required the 300-3400Hz band to
+#     out-energise the <200Hz band outright. Those clips run 0.018-0.135 on
+#     that ratio, so the gate could never pass. Candidate speech frames bottom
+#     out at 0.005; a pure <200Hz tone reaches only ~1e-28. 0.001 sits 5x below
+#     the quietest real speech frame and ~25 orders of magnitude above rumble.
+# The remaining constants, and the 0.1 fraction itself, are still uncalibrated
+# placeholders. VOICE.md section 11 is explicit that the band thresholds in its
+# own table come from only nine recordings -- "a starting point, not a
+# calibration" -- and nobody has yet checked any of this against labelled
+# owner/impostor audio. Revisit once labelled audio
 # exists; do not treat this VAD as validated in the meantime.
 FRAME_MS = 30  # analysis window length, uncalibrated placeholder
 FRAME_OVERLAP = 0.5  # fraction of the window overlapped by the next frame, uncalibrated placeholder
-RELATIVE_SPEECH_THRESHOLD = 0.1  # fraction of this clip's own peak 300-3400Hz frame energy, uncalibrated placeholder
-RUMBLE_RATIO_THRESHOLD = 1.0  # frame's 300-3400Hz energy must exceed this multiple of its own <200Hz energy, uncalibrated placeholder
+RELATIVE_SPEECH_THRESHOLD = 0.1  # fraction of this clip's reference 300-3400Hz frame energy, uncalibrated placeholder
+PEAK_PERCENTILE = 95  # percentile of in-band frame energy used as the clip's reference level
+RUMBLE_RATIO_THRESHOLD = 0.001  # frame's 300-3400Hz energy must exceed this multiple of its own <200Hz energy
 
 
 def decode_to_wav(src_path: str, *, ffmpeg_bin: str = "ffmpeg") -> str:
@@ -104,9 +115,10 @@ def speech_band_seconds(samples: list[int], sample_rate: int) -> float:
 
     Splits samples into overlapping frames, sums FFT power in the
     300-3400Hz band per frame, and marks a frame "speech" when its
-    in-band energy exceeds RELATIVE_SPEECH_THRESHOLD times the maximum
-    in-band energy seen anywhere in this clip -- self-relative, not an
-    absolute floor, since absolute levels vary by recording gain -- AND
+    in-band energy exceeds RELATIVE_SPEECH_THRESHOLD times this clip's
+    reference in-band energy (the PEAK_PERCENTILE-th percentile across its
+    frames) -- self-relative, not an absolute floor, since absolute levels
+    vary by recording gain -- AND
     exceeds RUMBLE_RATIO_THRESHOLD times that same frame's <200Hz rumble
     energy, per VOICE.md section 5 step 4 ("measure energy in 300-3400Hz
     against energy below 200Hz").
@@ -136,11 +148,14 @@ def speech_band_seconds(samples: list[int], sample_rate: int) -> float:
         speech_energy[i] = power[speech_mask].sum()
         rumble_energy[i] = power[rumble_mask].sum()
 
-    peak = speech_energy.max()
-    if peak <= 0:
+    if speech_energy.max() <= 0:
         return 0.0
+    # Percentile, not max: one broadband handling click would otherwise set the
+    # reference so high that RELATIVE_SPEECH_THRESHOLD of it clears every
+    # spoken frame. See the calibration note above the constants.
+    reference = np.percentile(speech_energy, PEAK_PERCENTILE)
 
-    is_speech = (speech_energy > RELATIVE_SPEECH_THRESHOLD * peak) & (
+    is_speech = (speech_energy > RELATIVE_SPEECH_THRESHOLD * reference) & (
         speech_energy > RUMBLE_RATIO_THRESHOLD * rumble_energy
     )
     # Frames overlap by FRAME_OVERLAP, so each speech frame contributes only

@@ -64,6 +64,32 @@ def test_speech_band_seconds_pure_rumble_tone_is_not_speech():
     assert seconds < 1.0
 
 
+def test_speech_band_seconds_click_does_not_mask_speech():
+    # Regression: the reference level is a percentile, not the maximum. One
+    # broadband handling click is far louder in-band than any spoken frame, so
+    # a max-based reference put RELATIVE_SPEECH_THRESHOLD of the click above
+    # the entire tone and returned ~0s. Real owner clips peak up to 14.5x their
+    # own 95th percentile, which is what made every one of them unscoreable.
+    rng = np.random.default_rng(0)
+    click = (rng.integers(-32000, 32000, int(SAMPLE_RATE * 0.03))).astype(np.int16).tolist()
+    samples = click + sine_samples(1000, 2.0, amp=2000)
+    seconds = audio.speech_band_seconds(samples, SAMPLE_RATE)
+    assert seconds >= 1.9
+
+
+def test_speech_band_seconds_speech_under_louder_rumble_is_speech():
+    # Regression: RUMBLE_RATIO_THRESHOLD was 1.0, requiring the 300-3400Hz band
+    # to out-energise the <200Hz band outright. VOICE.md section 5 step 4 says
+    # the owner's clips are 60-75% sub-200Hz, and the real ones measure
+    # 0.018-0.135 on that ratio, so the gate rejected all of them. Here the
+    # speech band carries 1% of the rumble band's energy and must still count.
+    rumble = np.asarray(sine_samples(100, 2.0, amp=25000))
+    speech = np.asarray(sine_samples(1000, 2.0, amp=2500))
+    samples = (rumble + speech).astype(np.int16).tolist()
+    seconds = audio.speech_band_seconds(samples, SAMPLE_RATE)
+    assert seconds >= 1.9
+
+
 def test_speech_band_seconds_silence_is_zero():
     samples = [0] * SAMPLE_RATE  # 1s of digital silence
     seconds = audio.speech_band_seconds(samples, SAMPLE_RATE)
