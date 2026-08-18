@@ -14,6 +14,12 @@ dependencies = [
 # inside load_embedder() so unit tests never need this extra.
 ml = [
     "torch",
+    # Declared explicitly only so [tool.uv.sources] can pin its index. It is a
+    # speechbrain dependency, and speechbrain imports it at module scope, so it
+    # must come from the same wheel index as torch. Left on PyPI it is built
+    # against the CUDA torch and _torchaudio.abi3.so fails to load against the
+    # +cpu build, which crashes the service on import.
+    "torchaudio",
     "speechbrain",
 ]
 
@@ -24,6 +30,7 @@ ml = [
 # threshold and the kubelet evicted this pod and obsidian with it.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
