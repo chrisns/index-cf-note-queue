@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:c3e521df8b2b498a7a682e7e18676771cb80c6b75b8699af886b2d554ce40151
 
 # VOICE.md section 5 step 3: ffmpeg binary must be on PATH to decode m4a -> wav.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
