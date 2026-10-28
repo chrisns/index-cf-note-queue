@@ -29,6 +29,7 @@ type server struct {
 	vault          string
 	tokenDigests   [][32]byte
 	ringPrefixes   []string
+	hmacSecret     []byte
 	voiceScorerURL string
 	vaultPokeURL   string
 	vaultPokeToken string
@@ -77,6 +78,10 @@ func startup() (*server, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	secret, err := parseHMACSecret(os.Getenv("INDEX_HMAC_SECRET"))
+	if err != nil {
+		return nil, "", err
+	}
 	vault := os.Getenv("VAULT_DIR")
 	if vault == "" {
 		return nil, "", errors.New("VAULT_DIR is not set")
@@ -91,7 +96,7 @@ func startup() (*server, string, error) {
 	// VOICE_SCORER_URL is optional: the voice scorer (VOICE.md) is an
 	// out-of-band advisory feature, unlike the bearer and ring prefixes.
 	// Unset means no poke, not a startup failure.
-	srv := &server{vault: vault, tokenDigests: digests, ringPrefixes: prefixes, voiceScorerURL: os.Getenv("VOICE_SCORER_URL")}
+	srv := &server{vault: vault, tokenDigests: digests, ringPrefixes: prefixes, hmacSecret: secret, voiceScorerURL: os.Getenv("VOICE_SCORER_URL")}
 	srv.vaultPokeURL, srv.vaultPokeToken = vaultPokeFromEnv()
 	return srv, listen, nil
 }

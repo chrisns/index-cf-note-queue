@@ -113,6 +113,26 @@ Two deliberate limits:
 
 `INDEX_RING_PREFIXES` is required at startup (section 6.7). Unset is fatal, so the check can never be silently inactive.
 
+### 6.2.2 Request signing, a third factor
+
+The Pebble app can sign each request with HMAC-SHA256 ("Sign requests"). `INDEX_HMAC_SECRET` holds the shared secret. The key is the UTF-8 bytes of the secret exactly as entered in the app. A 64-character hex string is used as that text and is **never** hex-decoded.
+
+The app sends `X-Index-Webhook-Version`, `X-Index-Signature`, `X-Index-Timestamp` (Unix seconds), `X-Index-Delivery`, `X-Index-Trigger` and, for test events only, `X-Index-Test: true`. The signed bytes are:
+
+```
+UTF8("v1\n" + timestamp + "\n" + deliveryId + "\n" + trigger + "\n" + (isTest ? "1" : "0") + "\n") || rawBody
+```
+
+The signature is lowercase hex. The service returns **401**, strictly and with nothing written, when:
+
+- the bearer is bad (checked first);
+- the version is not `1`, a signature header is missing, the signature is not 64 lowercase hex characters, or the timestamp is more than 300 seconds from the server clock either way. All of these are rejected before the body is read;
+- the digest over the whole body does not match, compared in constant time.
+
+The digest is computed while the body streams, then the remainder is drained so that bytes the multipart reader ignores are still covered. Audio sits in a temp file until the check passes, so a rejected request leaves nothing in the vault. A **truncated** body cannot match its signature and is therefore rejected with 401, unlike the unsigned behaviour in section 6.5. This is deliberate. `X-Index-Delivery` is not used for de-duplication.
+
+`INDEX_HMAC_SECRET` is required at startup, at least 32 bytes (section 6.7).
+
 ### 6.3 Reading the body
 
 - Wrap the body in `http.MaxBytesReader` at **16 MiB**.
@@ -158,6 +178,7 @@ Log once and exit non-zero when any of these fails. Fail at deploy, not at 3am.
 
 1. `INDEX_BEARER_TOKENS` is set, is non-empty after splitting on commas, and every entry is at least 32 bytes. An empty entry makes an expected digest `sha256("")`, and `Authorization: Bearer ` would authenticate.
 1b. `INDEX_RING_PREFIXES` is set and every entry is at least 8 bytes. Unset is fatal, so the second factor in section 6.2.1 can never be silently inactive.
+1c. `INDEX_HMAC_SECRET` is set and at least 32 bytes, so the signature check in section 6.2.2 can never be silently inactive.
 2. `VAULT_DIR` exists, and a probe file can be created and removed inside it.
 3. `VAULT_DIR` accepts a probe write, which is then removed. The service also attempts to tighten the directory to `0755`, but that is **best effort and must never be fatal**. Verified on the real cluster: `nfs-subdir-external-provisioner` creates the directory `root:root 0777`, so an unprivileged pod with every capability dropped can write to it but cannot `chmod` or `chown` it. The probe write is the only real gate.
 4. `time.LoadLocation("Europe/London")` succeeds. The binary must `import _ "time/tzdata"`, because a `scratch` image has no zoneinfo and the fallback is a silent switch to UTC.
@@ -410,6 +431,7 @@ Environment:
 |---|---|
 | `INDEX_BEARER_TOKENS` | from the Secret, comma-separated |
 | `INDEX_RING_PREFIXES` | from the Secret, comma-separated. Identifies the hardware, so never in git |
+| `INDEX_HMAC_SECRET` | from the Secret. The app's "Sign requests" secret, so never in git |
 | `VAULT_DIR` | `/vault` |
 | `TZ` | `Europe/London` |
 | `LISTEN_ADDR` | `:8080` |

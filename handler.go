@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -204,6 +205,14 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	// Signature headers are checked before the body is read, so a request that
+	// cannot verify is bounced at once. The digest itself needs the whole body.
+	sig, serr := s.startSignature(r)
+	if serr != nil {
+		log.Printf("rejected: signature: %v", serr)
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	var st partState
 	defer func() {
 		if st.audioTmp != nil {
@@ -224,7 +233,11 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 	}
 	// The tail is what tells a real "--boundary--" close apart from a body that
 	// died early: mime/multipart reports both as io.EOF (SPEC 6.4).
-	tail := &tailReader{r: http.MaxBytesReader(w, r.Body, maxBody), keep: len(boundary) + 512}
+	body := io.Reader(http.MaxBytesReader(w, r.Body, maxBody))
+	if sig != nil {
+		body = io.TeeReader(body, sig.mac)
+	}
+	tail := &tailReader{r: body, keep: len(boundary) + 512}
 	mr := multipart.NewReader(tail, boundary)
 
 	for boundary != "" {
@@ -257,6 +270,19 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 		}
 		truncated = true
 		break
+	}
+
+	// The HMAC covers every byte of the body, including any the multipart reader
+	// did not need. Drain the rest, then verify. Nothing durable has been written
+	// yet: audio sits in a temp file the deferred cleanup removes. A truncated
+	// body cannot verify, so it is rejected here rather than recorded.
+	if sig != nil {
+		io.Copy(io.Discard, tail)
+		if !sig.verify() {
+			log.Printf("rejected: signature mismatch")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Second factor, checked before anything is written. A mismatch means the
