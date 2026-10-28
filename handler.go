@@ -288,8 +288,6 @@ func (s *server) handleNote(w http.ResponseWriter, r *http.Request) {
 	// Second factor, checked before anything is written. A mismatch means the
 	// audio did not come from a known ring, so there is no note of yours to lose.
 	if !s.fromKnownRing(st.rawFilename, st.audioTmp != nil) {
-		// TEMPORARY: reveal the unknown ring's id so it can be whitelisted.
-		log.Printf("rejected: unknown ring %q", truncLog(st.rawFilename))
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
