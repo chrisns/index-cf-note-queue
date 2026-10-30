@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from index_note_voice import audio, server, state
+from index_note_voice import audio, gallery, server, state
 from index_note_voice.config import Config
 
 NOTE_TEXT = """---
@@ -471,3 +471,76 @@ def test_post_score_starts_a_new_pass_once_the_previous_one_finished(tmp_path, m
         assert call_count["n"] == 2
     finally:
         stop_server(httpd, thread)
+
+
+# ---------------------------------------------------------------------------
+# sweep only does new work, one clip at a time
+# ---------------------------------------------------------------------------
+
+
+def test_run_sweep_pass_embeds_each_clip_once_and_one_at_a_time(tmp_path):
+    cfg, vault_dir, _state_dir = make_config(tmp_path)
+    old = time.time() - 7200
+    for rid in ("gallery-1", "match-1", "nomatch-1"):
+        write_attachment(vault_dir, rid)
+    write_note(vault_dir, "gallery.md", "gallery-1", verified=True, mtime=old)
+    write_note(vault_dir, "match.md", "match-1", verified=False, mtime=old)
+    write_note(vault_dir, "nomatch.md", "nomatch-1", verified=False, mtime=old)
+
+    in_flight = 0
+    seen: list[list] = []
+
+    def serial_embed_fn(samples, sample_rate):
+        nonlocal in_flight
+        in_flight += 1
+        assert in_flight == 1, "two clips were being embedded at once"
+        seen.append(list(samples))
+        try:
+            return fake_embed_fn(samples, sample_rate)
+        finally:
+            in_flight -= 1
+
+    server.run_sweep_pass(cfg, serial_embed_fn)
+    assert len(seen) == 3  # one embed per clip, however many times it is read
+
+    # Attachments go in a fixed (sorted) order, so a restart resumes predictably.
+    assert seen == [SAMPLES_BY_RID[r] for r in ("gallery-1", "match-1", "nomatch-1")]
+
+
+def test_run_sweep_pass_with_nothing_new_never_touches_the_model_or_gallery(tmp_path, monkeypatch):
+    cfg, vault_dir, _state_dir = make_config(tmp_path)
+    old = time.time() - 7200
+    write_attachment(vault_dir, "gallery-1")
+    write_attachment(vault_dir, "match-1")
+    write_note(vault_dir, "gallery.md", "gallery-1", verified=True, mtime=old)
+    write_note(vault_dir, "match.md", "match-1", verified=False, mtime=old)
+    server.run_sweep_pass(cfg, fake_embed_fn)  # first pass assesses everything
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("an already-assessed sweep must not do this")
+
+    monkeypatch.setattr(gallery, "build_gallery_from_state", forbidden)
+    stats = server.run_sweep_pass(cfg, forbidden)
+
+    assert stats["scored"] == 0 and stats["errors"] == 0
+    assert stats["skipped"] == 2
+
+
+def test_run_sweep_pass_embeds_only_the_new_attachment(tmp_path):
+    cfg, vault_dir, _state_dir = make_config(tmp_path)
+    old = time.time() - 7200
+    write_attachment(vault_dir, "gallery-1")
+    write_note(vault_dir, "gallery.md", "gallery-1", verified=True, mtime=old)
+    server.run_sweep_pass(cfg, fake_embed_fn)
+
+    write_attachment(vault_dir, "nomatch-1")
+    write_note(vault_dir, "nomatch.md", "nomatch-1", verified=False, mtime=old)
+    embedded = []
+
+    def spy(samples, sample_rate):
+        embedded.append(list(samples))
+        return fake_embed_fn(samples, sample_rate)
+
+    server.run_sweep_pass(cfg, spy)
+
+    assert embedded == [SAMPLES_BY_RID["nomatch-1"]]

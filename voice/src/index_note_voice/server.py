@@ -3,6 +3,8 @@ triggers it (VOICE.md sections 5, 8). Imports every other module for real.
 """
 from __future__ import annotations
 
+import ctypes
+import gc
 import logging
 import os
 import threading
@@ -15,6 +17,19 @@ from index_note_voice.embed import EmbedFn
 from index_note_voice.state import Record
 
 logger = logging.getLogger(__name__)
+
+
+def _release_memory() -> None:
+    """Collect garbage and ask glibc to return freed heap to the kernel.
+
+    Python and torch free memory to malloc, which keeps it mapped, so without
+    this the container's footprint only ever ratchets up across a backlog.
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not glibc; nothing to trim
 
 
 def ensure_scored(recording_id: str, cfg: Config, embed_fn: EmbedFn) -> Record:
@@ -72,21 +87,29 @@ def run_sweep_pass(cfg: Config, embed_fn: EmbedFn) -> dict:
     """
     stats = {"scored": 0, "unscoreable": 0, "no_gallery": 0, "skipped": 0, "errors": 0}
 
-    # Steps 1+2 combined: this both embeds every gallery candidate and every
-    # other unscored attachment, since ensure_scored is a cheap no-op for
-    # anything already cached. Same per-item isolation as the note loop below
-    # -- one bad attachment must never abort the whole sweep.
-    for recording_id in state.list_attachment_ids(cfg.vault_dir):
+    # Steps 1+2 combined, one clip at a time: embed only the attachments that
+    # have no cached record, so a pass with nothing new never runs the model.
+    # Same per-item isolation as the note loop below -- one bad attachment must
+    # never abort the whole sweep.
+    pending = [
+        recording_id
+        for recording_id in sorted(state.list_attachment_ids(cfg.vault_dir))
+        if state.read_record(cfg.state_dir, recording_id) is None
+    ]
+    for recording_id in pending:
         try:
             ensure_scored(recording_id, cfg, embed_fn)
         except Exception:
             logger.exception("sweep: failed to score attachment %s", recording_id)
             stats["errors"] += 1
+        # Each clip leaves tensors and decode buffers behind; hand them back
+        # before the next one so the peak is one clip, not the whole backlog.
+        _release_memory()
 
-    # Named gallery_embeddings, not gallery, so it never shadows the imported
-    # gallery module used below.
-    gallery_embeddings = gallery.build_gallery_from_state(cfg.vault_dir, cfg.state_dir)
-
+    # Notes that still need a voice field. Anything already scored, without a
+    # recording, or edited in the last hour is skipped and never touches the
+    # model or the gallery.
+    todo = []
     for note_path in splice.all_notes(cfg.vault_dir):
         try:
             flags = splice.read_flags(note_path)
@@ -98,8 +121,20 @@ def run_sweep_pass(cfg: Config, embed_fn: EmbedFn) -> dict:
             if (time.time() - flags.mtime) < 3600:
                 stats["skipped"] += 1
                 continue
+            todo.append((note_path, flags.recording_id))
+        except Exception:
+            logger.exception("sweep: failed to read note %s", note_path)
+            stats["errors"] += 1
+    if not todo:
+        return stats
 
-            record = ensure_scored(flags.recording_id, cfg, embed_fn)
+    # Named gallery_embeddings, not gallery, so it never shadows the imported
+    # gallery module used below.
+    gallery_embeddings = gallery.build_gallery_from_state(cfg.vault_dir, cfg.state_dir)
+
+    for note_path, recording_id in todo:
+        try:
+            record = ensure_scored(recording_id, cfg, embed_fn)
 
             if record.unscoreable:
                 splice.splice_voice_fields(

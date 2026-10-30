@@ -17,6 +17,7 @@ import os
 import subprocess
 import tempfile
 import wave
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -105,20 +106,22 @@ def decode_to_wav(src_path: str, *, ffmpeg_bin: str = "ffmpeg") -> str:
     return wav_path
 
 
-def read_wav_samples(wav_path: str) -> tuple[list[int], int]:
+def read_wav_samples(wav_path: str) -> tuple[np.ndarray, int]:
     """Read a mono 16-bit PCM WAV via the stdlib "wave" module.
 
-    Returns (samples, sample_rate) with samples as a flat list of signed
-    16-bit ints. See the module docstring for why torchaudio is not used.
+    Returns (samples, sample_rate) with samples as a flat int16 array. It stays
+    an array rather than a list of Python ints, which cost about 40 bytes a
+    sample and were the bulk of a clip's memory. See the module docstring for
+    why torchaudio is not used.
     """
     with wave.open(wav_path, "rb") as wf:
         sample_rate = wf.getframerate()
         raw = wf.readframes(wf.getnframes())
-    samples = np.frombuffer(raw, dtype=np.int16).tolist()
+    samples = np.frombuffer(raw, dtype=np.int16)
     return samples, sample_rate
 
 
-def speech_band_seconds(samples: list[int], sample_rate: int) -> float:
+def speech_band_seconds(samples: Sequence[int] | np.ndarray, sample_rate: int) -> float:
     """Seconds of 300-3400Hz speech-band energy, per VOICE.md section 5 step 4.
 
     Splits samples into overlapping frames, sums FFT power in the

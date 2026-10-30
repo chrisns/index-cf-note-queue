@@ -119,7 +119,10 @@ def test_read_wav_samples_roundtrips_int16_mono(tmp_path):
 
     samples, sample_rate = audio.read_wav_samples(wav_path)
 
-    assert samples == original
+    # An int16 array, not a list of Python ints: those cost ~40 bytes a sample.
+    assert isinstance(samples, np.ndarray)
+    assert samples.dtype == np.int16
+    assert samples.tolist() == original
     assert sample_rate == 16000
 
 

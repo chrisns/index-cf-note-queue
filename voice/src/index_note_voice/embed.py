@@ -9,10 +9,12 @@ numpy/pyyaml installed. Every other module receives the returned EmbedFn as a
 parameter and never imports torch/speechbrain itself.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+
+import numpy as np
 
 # (samples, sample_rate) -> 192-dim speaker embedding.
-EmbedFn = Callable[[list[int], int], list[float]]
+EmbedFn = Callable[[Sequence[int] | np.ndarray, int], list[float]]
 
 # Lazy singleton cache keyed by model_dir, so repeated calls with the same
 # model_dir reuse the already-loaded (large, slow-to-load) model.
@@ -35,10 +37,13 @@ def load_embedder(model_dir: str) -> EmbedFn:
         )
         _classifier_cache[model_dir] = classifier
 
-    def embed_fn(samples: list[int], sample_rate: int) -> list[float]:
+    def embed_fn(samples: Sequence[int] | np.ndarray, sample_rate: int) -> list[float]:
         # int16 -> float32 in [-1, 1], the range encode_batch expects.
-        waveform = torch.tensor(samples, dtype=torch.float32) / 32768.0
-        embedding = classifier.encode_batch(waveform.unsqueeze(0))
-        return embedding.squeeze().tolist()
+        # inference_mode keeps no autograd graph, and from_numpy shares the
+        # buffer instead of copying a Python list element by element.
+        with torch.inference_mode():
+            waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)) / 32768.0
+            embedding = classifier.encode_batch(waveform.unsqueeze(0))
+            return embedding.squeeze().tolist()
 
     return embed_fn
