@@ -1,5 +1,17 @@
 {
   "extends": [
     "github>chrisns/.github:renovate"
+  ],
+  "packageRules": [
+    {
+      // torchaudio 2.11 is the last release and ships wheels for cp312-cp314
+      // only, so a Python 3.15 base cannot install the voice image's ml extra.
+      // Drop this rule once torchaudio publishes cp315 wheels.
+      "description": "Hold the voice image's Python base below 3.15",
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": ["voice/Dockerfile"],
+      "matchPackageNames": ["python"],
+      "allowedVersions": "<3.15"
+    }
   ]
 }
