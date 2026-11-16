@@ -12,6 +12,6 @@ permissions:
 
 jobs:
   build:
-    uses: chrisns/.github/.github/workflows/dockerbuild.yml@44c15f65e629a1dc493b1da1fb4f04efc6d9ff90 # main
+    uses: chrisns/.github/.github/workflows/dockerbuild.yml@6b4c0e75fbeaecfb1e6c531a34512f850dd7f1e6 # main
     with:
       platforms: linux/amd64,linux/arm64
