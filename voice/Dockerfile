@@ -1,7 +1,7 @@
 # Held on 3.14: torchaudio 2.11 (the last release; see pyproject.toml) ships
 # wheels for cp312-cp314 only, so a 3.15 base fails "uv sync --extra ml". Do not
 # let a bot move this to 3.15 until torchaudio publishes cp315 wheels.
-FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 
 # VOICE.md section 5 step 3: ffmpeg binary must be on PATH to decode m4a -> wav.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
